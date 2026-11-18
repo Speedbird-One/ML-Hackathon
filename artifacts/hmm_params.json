@@ -1,0 +1,60 @@
+{
+  "scores_from": "tuned LightGBM (artifacts/lgbm_tuned.joblib); train trips scored out-of-fold (grouped 5-fold)",
+  "objective": "maximise train out-of-fold point-level top-1 after HMM decoding (labelled points only)",
+  "search_space": {
+    "beta": [
+      0.5,
+      50,
+      "log"
+    ],
+    "max_net_dist_m": [
+      100,
+      1000
+    ],
+    "gap_s": [
+      10,
+      120
+    ],
+    "gap_m": [
+      100,
+      600
+    ],
+    "unreachable_penalty_magnitude": [
+      20,
+      5000,
+      "log"
+    ],
+    "jitter_tol_m": [
+      0,
+      30
+    ]
+  },
+  "sampler": "TPE, 8 random start-up trials; trial 0 = default parameters",
+  "seed": 42,
+  "trials": 29,
+  "best_trial": 22,
+  "search_wall_time_s": 627.9,
+  "default_train_top1": 0.9017524537591914,
+  "best_train_top1": 0.9323907010894799,
+  "params": {
+    "sigma": 4.07,
+    "beta": 0.9631277940818218,
+    "max_net_dist_m": 927.8370535829913,
+    "gap_s": 111.1788874681111,
+    "gap_m": 539.4095148584976,
+    "unreachable_penalty": -1337.4349339066735,
+    "use_score": true,
+    "jitter_tol_m": 24.81109049230994
+  },
+  "default_params": {
+    "sigma": 4.07,
+    "beta": 5.0,
+    "max_net_dist_m": 300.0,
+    "gap_s": 30.0,
+    "gap_m": 200.0,
+    "unreachable_penalty": -1000.0,
+    "use_score": true,
+    "jitter_tol_m": 10.0
+  },
+  "test_mode_max_trips": null
+}

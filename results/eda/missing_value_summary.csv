@@ -1,0 +1,3 @@
+partition,trips,gps_points,track_nan_inf,node_nan_inf,coords_out_of_range,nonpositive_time_steps,arc_node_ids_out_of_range,self_loop_arcs,route_ids_out_of_range,route_breaks,time_gaps_over_1_5s,trips_with_time_gaps,longest_time_gap_s,points_without_reference_arc,pct_points_without_reference_arc,points_without_any_candidate,pct_points_without_any_candidate
+student_test,10,19160,0,0,0,0,0,2,0,1,264,6,210.0,27,0.1409185803757829,10,0.05219206680584551
+train,80,208417,0,0,0,0,0,22,0,13,7273,60,153064.0,23191,11.127211311937126,18841,9.040049516114328

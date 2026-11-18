@@ -1,0 +1,6 @@
+Model,Algorithm Family,Key Configuration,CV Macro F1-score,Top-1 Accuracy (student-test),Route Continuity (student-test),Student-Test Macro F1-score,Log Loss (student-test),Inference Time (ms per GPS point)
+Logistic Regression,Linear,"C=1.0, max_iter=300, StandardScaler, class_weight=None",0.8966478964147893,0.85301192219201,0.9043627949075494,0.9001069127520174,0.12078614099341883,0.0003253451160911
+Gaussian Naive Bayes,Probabilistic (generative),"var_smoothing=1e-9 (default), priors=None (learned from data), no scaler",0.8308519839443818,0.8155720560552185,0.8998608053695916,0.8230545167575509,0.5613557516469129,0.0016831363731511
+Random Forest,Bagging ensemble,"n_estimators=60, max_depth=14, min_samples_leaf=50, random_state=SEED",0.9188920145279844,0.8702154361012341,0.9229217294028385,0.922613412943052,0.07977664271130876,0.0091448441748714
+LightGBM,Gradient boosting,"n_estimators=300, learning_rate=0.05, num_leaves=63, other parameters default (untuned)",0.9207789096209558,0.8764379836854215,0.9251548680897997,0.9265551514991908,0.07649537051296232,0.0211574461409943
+MLP,Neural network,"hidden=(64,32), relu, adam, early_stopping (10% val), max_iter=50, StandardScaler",0.9152264604655808,0.8766471449487555,0.9245225503460391,0.9233252596864439,0.07954088637591049,0.0045885118176121

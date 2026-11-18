@@ -46,7 +46,6 @@ MODEL_NAMES = {
     "logreg": "Logistic Regression",
     "nb": "Gaussian Naive Bayes",
     "mlp": "MLP (Neural Net)",
-    "svm": "Linear SVM",
     "hmm": "HMM / Viterbi Decoded",
 }
 
@@ -406,7 +405,7 @@ def generate_map_for_model(
 
 def main():
     parser = argparse.ArgumentParser(description="Generate interactive Folium maps and report figures for any PathSnap model.")
-    parser.add_argument("--model", type=str, default="lgbm", help="Model key ('lgbm', 'rf', 'logreg', 'nb', 'mlp', 'svm', 'none', or 'all')")
+    parser.add_argument("--model", type=str, default="lgbm", help="Model key ('lgbm', 'rf', 'logreg', 'nb', 'mlp', 'none', or 'all')")
     parser.add_argument("--partition", type=str, default="student_test", help="Dataset partition ('train' or 'student_test')")
     parser.add_argument("--trip-id", type=str, default="00000000", help="Trip ID to map (e.g. '00000000')")
     parser.add_argument("--scores-path", type=str, default=None, help="Explicit path to scores parquet/CSV")

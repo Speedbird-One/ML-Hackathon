@@ -1,99 +1,115 @@
-"""Evaluation and verification script for HMM / Viterbi decoder.
+"""Evaluate the HMM/Viterbi decoder against classifier-only predictions on the student-test trips.
 
-Runs decode() on a real trip, checks execution speed, route continuity,
-and sequence recovery against the reference route.
+This is the report's section-5 comparison. It scores every candidate with the final classifier, then reports, on all
+10 student-test trips:
+  * classifier only        : highest-scoring candidate per GPS point
+  * classifier + HMM (default parameters)
+  * classifier + HMM (tuned parameters), if artifacts/hmm_params.json exists (written by scripts/tune_hmm.py)
+Metrics: point-level top-1 (all labelled points; a point with no prediction counts as wrong), top-1 split into slow
+(< 1 m/s, heading unreliable) and moving points, route continuity, sequence-level route recall/precision/F1, and
+decoder runtime. It also lists every trip where the HMM did not help, and the trip-by-trip change.
+The decoder runs on EVERY point's candidates, as at inference; only points with a reference arc are scored.
+Only student-test data is used (the evaluator trips are never touched).
+
+Usage (repo root):
+    python scripts/eval_hmm.py                                  # final model: artifacts/lgbm_tuned.joblib
+    python scripts/eval_hmm.py --model mlp                      # any saved model in artifacts/
+    python scripts/eval_hmm.py --params artifacts/hmm_params.json --jobs 4
+Outputs in results/hmm/: hmm_eval_student_test.csv/.md, hmm_eval_per_trip.csv, hmm_eval_where_not_helped.md
 """
-
 import argparse
+import os
 import sys
 import time
+import warnings
 from pathlib import Path
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import numpy as np
-from pathsnap.data import list_trips, load_trip
-from pathsnap.hmm import decode, generate_standin_candidates, DEFAULT_PARAMS
-from pathsnap.metrics import route_continuity, build_adjacency
+import joblib
+import pandas as pd
+from joblib import Parallel
 
+from pathsnap.config import ARTIFACTS_DIR, CACHE_DIR, RESULTS_DIR
+from pathsnap.decode_eval import (argmax_predictions, decode_trips, evaluate, load_hmm_params, load_trips_and_refs,
+                                  point_speeds, score_candidates, summarise)
+from pathsnap.hmm import DEFAULT_PARAMS
 
-def evaluate_trip(trip_id: str, partition: str = "train"):
-    print(f"\n==========================================")
-    print(f" Evaluating HMM Decoder on Trip: {trip_id} ({partition})")
-    print(f"==========================================")
+ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+ap.add_argument("--model", default="lgbm_tuned", help="artifact name in artifacts/ (without .joblib)")
+ap.add_argument("--params", type=Path, default=ARTIFACTS_DIR / "hmm_params.json", help="tuned decoder parameters (optional)")
+ap.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1))
+ap.add_argument("--out-dir", type=Path, default=RESULTS_DIR / "hmm")
+args = ap.parse_args()
+warnings.filterwarnings("ignore")
+args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Load trip
-    t_start = time.perf_counter()
-    trip = load_trip(partition, trip_id)
-    t_load = time.perf_counter() - t_start
-    n_points = len(trip.track)
-    print(f"[1/4] Loaded trip: {n_points} GPS points, {len(trip.arcs)} arcs ({t_load*1000:.1f} ms)")
+model_path = ARTIFACTS_DIR / f"{args.model}.joblib"
+if not model_path.exists():
+    sys.exit(f"{model_path} not found")
 
-    # 2. Generate candidate set
-    t_start = time.perf_counter()
-    candidates = generate_standin_candidates(trip, k=5, max_dist_m=100.0)
-    t_cand = time.perf_counter() - t_start
-    print(f"[2/4] Generated candidates: {len(candidates)} rows for {n_points} points ({t_cand*1000:.1f} ms)")
+cands = pd.read_parquet(CACHE_DIR / "candidates_student_test.parquet")
+trip_ids = sorted(cands.trip_id.unique())
+trips, refs, adjacency = load_trips_and_refs("student_test", trip_ids)
+scored = score_candidates(joblib.load(model_path), cands)
+speeds = point_speeds(scored, trips)
+n_lab = int(sum((r >= 0).sum() for r in refs.values()))
+print(f"student-test: {len(trips)} trips, {n_lab} labelled points, {len(scored):,} candidate rows; model: {args.model}; workers: {args.jobs}")
 
-    # 3. Run HMM Viterbi decode
-    t_start = time.perf_counter()
-    predicted_arcs = decode(trip, candidates, DEFAULT_PARAMS)
-    t_decode = time.perf_counter() - t_start
-    print(f"[3/4] HMM Viterbi decoded in: {t_decode*1000:.1f} ms ({n_points / max(t_decode, 1e-6):.0f} pts/sec)")
+decoders = [("HMM, default parameters", dict(DEFAULT_PARAMS))]
+have_tuned = args.params.exists()
+if have_tuned:
+    decoders.append(("HMM, tuned parameters", load_hmm_params(args.params)))
+else:
+    print(f"[note] {args.params} not found: only default parameters evaluated (run scripts/tune_hmm.py first for tuned ones)")
 
-    # 4. Analyze Route Quality
-    valid_mask = predicted_arcs != -1
-    n_valid = int(np.sum(valid_mask))
-    print(f"\n--- Output Statistics ---")
-    print(f"Total GPS points:         {n_points}")
-    print(f"Decoded points:           {n_valid} / {n_points} ({100.0 * n_valid / n_points:.1f}%)")
-    print(f"Missing (-1) points:      {n_points - n_valid}")
+results = {"Classifier only": (argmax_predictions(scored, trips), None, None)}
+with Parallel(n_jobs=args.jobs) as pool:
+    for name, params in decoders:
+        t0 = time.perf_counter()
+        preds, cpu_s = decode_trips("student_test", scored, params, pool)
+        results[name] = (preds, cpu_s, time.perf_counter() - t0)
 
-    # Route continuity — uses the same logic as pathsnap.metrics.route_continuity()
-    # so our numbers match exactly what Teammate 3's experiment harness reports.
-    adjacency = build_adjacency(trip.arcs)
-    continuity_rate = route_continuity(predicted_arcs, trip.arcs, adjacency) * 100.0
-    n_valid_transitions = sum(
-        1 for i in range(len(predicted_arcs) - 1)
-        if predicted_arcs[i] != -1 and predicted_arcs[i + 1] != -1
-    )
-    print(f"Route continuity (metrics.py): {continuity_rate:.2f}%  ({n_valid_transitions} valid transitions)")
+n_points = int(sum(len(t.track) for t in trips.values()))
+rows, per_trip = [], {}
+for name, (preds, cpu_s, wall_s) in results.items():
+    df = evaluate(preds, trips, refs, adjacency, speeds)
+    per_trip[name] = df
+    m = summarise(df)
+    rows.append({"Method": name, "Top-1": m["top1"], "Top-1 moving": m["top1_moving"], "Top-1 slow (<1 m/s)": m["top1_slow"],
+                 "Route continuity": m["continuity"], "Route recall": m["route_recall"], "Route precision": m["route_precision"],
+                 "Route F1": m["route_f1"], "Decode ms/point (CPU)": (1000 * cpu_s / n_points) if cpu_s is not None else float("nan"),
+                 "Decode wall s": wall_s if wall_s is not None else float("nan")})
+summary = pd.DataFrame(rows)
+summary.to_csv(args.out_dir / "hmm_eval_student_test.csv", index=False)
+(args.out_dir / "hmm_eval_student_test.md").write_text(summary.to_markdown(index=False, floatfmt=".4f"), encoding="utf-8")
 
-    # Sequence collapse (consecutive duplicate arcs collapsed into a route sequence)
-    compact_route = []
-    for a in predicted_arcs:
-        if a != -1 and (not compact_route or compact_route[-1] != a):
-            compact_route.append(a)
+# trip-by-trip table and the cases where the HMM did not help
+base = per_trip["Classifier only"].set_index("trip")
+long = []
+for name, df in per_trip.items():
+    d = df.set_index("trip")
+    long.append(d[["labelled", "top1", "continuity", "route_f1"]].assign(method=name).reset_index())
+pd.concat(long).to_csv(args.out_dir / "hmm_eval_per_trip.csv", index=False)
 
-    print(f"Predicted route length:   {len(compact_route)} unique road segments")
+lines = ["# Where the HMM did not help (student-test)\n"]
+for name, _ in decoders:
+    d = per_trip[name].set_index("trip")
+    delta = (d.top1 - base.top1) * 100
+    worse = delta[delta < 0].sort_values()
+    lines.append(f"## {name}")
+    lines.append(f"- top-1 change per trip (points): min {delta.min():+.2f}, median {delta.median():+.2f}, max {delta.max():+.2f}")
+    lines.append(f"- trips where the HMM was worse than classifier-only: {len(worse)} of {len(delta)}")
+    for t, v in worse.items():
+        lines.append(f"  - trip {t}: {v:+.2f} points ({int(base.loc[t, 'labelled'])} labelled points)")
+    sl_b = per_trip['Classifier only'].slow_correct.sum() / max(per_trip['Classifier only'].slow_labelled.sum(), 1)
+    sl_h = per_trip[name].slow_correct.sum() / max(per_trip[name].slow_labelled.sum(), 1)
+    lines.append(f"- slow points (<1 m/s): classifier-only {sl_b:.3f} -> HMM {sl_h:.3f} "
+                 f"({int(per_trip[name].slow_labelled.sum())} points)")
+    lines.append(f"- continuity: classifier-only {per_trip['Classifier only'].continuity.mean():.3f} -> HMM {d.continuity.mean():.3f}\n")
+(args.out_dir / "hmm_eval_where_not_helped.md").write_text("\n".join(lines), encoding="utf-8")
 
-    # Ground truth comparison if route is available
-    if trip.route is not None:
-        gt_route = trip.route
-        print(f"\n--- Ground Truth Comparison (.route) ---")
-        print(f"Ground-truth route length: {len(gt_route)} road segments")
-
-        # Set-level overlap of predicted vs ground-truth arcs
-        pred_set = set(compact_route)
-        gt_set = set(gt_route)
-        intersection = pred_set.intersection(gt_set)
-        jaccard = len(intersection) / len(pred_set.union(gt_set)) * 100.0
-        gt_coverage = len(intersection) / len(gt_set) * 100.0
-
-        print(f"Route recall (GT arcs hit): {len(intersection)} / {len(gt_set)} ({gt_coverage:.1f}%)")
-        print(f"Route Jaccard similarity:   {jaccard:.1f}%")
-
-    print(f"==========================================\n")
-    return predicted_arcs
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate HMM Decoder on a trip")
-    parser.add_argument("--trip_id", type=str, default="00000085", help="Trip ID to evaluate")
-    parser.add_argument("--partition", type=str, default="train", help="train or student_test")
-    args = parser.parse_args()
-
-    evaluate_trip(args.trip_id, args.partition)
+print("\n=== CLASSIFIER ONLY vs CLASSIFIER + HMM (student-test) ===")
+print(summary.to_markdown(index=False, floatfmt=".4f"))
+print("\n" + "\n".join(lines))
+print(f"\nSaved to {args.out_dir}")

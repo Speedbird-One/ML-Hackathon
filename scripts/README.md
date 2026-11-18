@@ -20,11 +20,10 @@ This directory contains standalone, runnable entry points for data processing, c
 
 ### How Each Teammate Uses It
 
-#### 1. Teammate 1: Logistic Regression & Linear SVM
+#### 1. Teammate 1: Logistic Regression
 After running your training script (`scripts/train_logreg.py`), generate maps with:
 ```bash
 python scripts/make_map.py --model logreg --trip-id 00000000
-python scripts/make_map.py --model svm    --trip-id 00000000
 ```
 
 #### 2. Teammate 2: Gaussian Naive Bayes & HMM
@@ -68,7 +67,7 @@ python scripts/make_map.py --model none --trip-id 00000000
 
 | Argument | Type | Default | Description |
 |---|---|---|---|
-| `--model` | str | `lgbm` | Model key: `lgbm`, `rf`, `logreg`, `nb`, `mlp`, `svm`, `hmm`, `none`, or `all` |
+| `--model` | str | `lgbm` | Model key: `lgbm`, `rf`, `logreg`, `nb`, `mlp`, `hmm`, `none`, or `all` |
 | `--partition` | str | `student_test` | Partition to map: `student_test` or `train` |
 | `--trip-id` | str | `00000000` | 8-digit trip ID string (e.g. `00000000`, `00000007`) |
 | `--scores-path` | str | `None` | Optional explicit path to a scores parquet or CSV file |

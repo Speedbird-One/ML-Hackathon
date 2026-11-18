@@ -1,4 +1,4 @@
-"""Generate PES1UG24CS928 Logistic Regression visualisations from real model runs."""
+"""Generate Teammate 1 Logistic Regression visualisations from real model runs."""
 import argparse
 import sys
 from pathlib import Path
@@ -25,7 +25,7 @@ FEATURES = [
     "dist_m", "along_frac", "arc_len_m", "speed_mps", "cos_heading",
     "dist_rank", "dist_minus_min", "n_cand",
 ]
-OUTPUT_DIR = RESULTS_DIR / "pes1ug24cs928_logistic_regression"
+OUTPUT_DIR = RESULTS_DIR / "logreg_analysis"
 
 
 def parse_args():
