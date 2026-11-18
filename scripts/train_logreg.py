@@ -74,6 +74,7 @@ def main():
         train_trips=train_trips,
         test_trips=test_trips,
         logger=ExperimentLogger(RESULTS_DIR / "logs" / "experiments_logreg.csv"),
+        save_name="logreg" if class_weight is None else "logreg_balanced",  # saves model + scores
     )
 
 
