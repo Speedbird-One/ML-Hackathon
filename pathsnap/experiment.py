@@ -1,0 +1,274 @@
+"""Experiment harness for PathSnap.
+
+Provides:
+- Grouped K-Fold cross-validation (GroupKFold grouped by trip_id to prevent leakage)
+- Standardized evaluation on 80 train trips and 10 student-test trips
+- Comprehensive logging to results/logs/experiments.csv
+"""
+import os
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import GroupKFold
+
+from .config import RESULTS_DIR, SEED
+from .metrics import (
+    candidate_metrics,
+    candidate_miss_rate,
+    route_continuity,
+    top1_accuracy,
+)
+
+
+@dataclass
+class ExperimentResult:
+    model_name: str
+    family: str
+    key_config: str
+    seed: int
+    # Cross-validation metrics (80 train trips, grouped by trip_id)
+    cv_macro_f1: float
+    cv_top1_acc: float
+    cv_log_loss: float
+    cv_binary_f1: float
+    cv_accuracy: float
+    cv_route_continuity: float
+    # Student-test metrics (10 test trips)
+    test_macro_f1: float
+    test_top1_acc: float
+    test_log_loss: float
+    test_binary_f1: float
+    test_accuracy: float
+    test_route_continuity: float
+    # Computational efficiency
+    train_time_sec: float
+    inference_time_ms_per_point: float
+    timestamp: str
+
+
+class ExperimentLogger:
+    """Manages experiment records in results/logs/experiments.csv."""
+
+    def __init__(self, log_path: Optional[Path] = None):
+        self.log_path = log_path or (RESULTS_DIR / "logs" / "experiments.csv")
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_header()
+
+    def _ensure_header(self):
+        if not self.log_path.exists():
+            headers = [
+                "model_name",
+                "family",
+                "key_config",
+                "seed",
+                "cv_macro_f1",
+                "cv_top1_acc",
+                "cv_log_loss",
+                "cv_binary_f1",
+                "cv_accuracy",
+                "cv_route_continuity",
+                "test_macro_f1",
+                "test_top1_acc",
+                "test_log_loss",
+                "test_binary_f1",
+                "test_accuracy",
+                "test_route_continuity",
+                "train_time_sec",
+                "inference_time_ms_per_point",
+                "timestamp",
+            ]
+            pd.DataFrame(columns=headers).to_csv(self.log_path, index=False)
+
+    def log(self, result: ExperimentResult):
+        df_row = pd.DataFrame([asdict(result)])
+        df_row.to_csv(self.log_path, mode="a", header=not self.log_path.exists(), index=False)
+        print(f"[Logger] Logged {result.model_name} ({result.family}) to {self.log_path}")
+
+    def load_table(self) -> pd.DataFrame:
+        """Load experiment history as DataFrame."""
+        if self.log_path.exists():
+            return pd.read_csv(self.log_path)
+        return pd.DataFrame()
+
+
+def evaluate_split(
+    model: Any,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    val_df: pd.DataFrame,
+    trips_dict: Optional[Dict[str, Any]] = None,
+) -> Dict[str, float]:
+    """Evaluate a trained model on a given validation candidate slice."""
+    # Predict probabilities if supported, else decision function or hard labels
+    y_prob = None
+    if hasattr(model, "predict_proba"):
+        probs = model.predict_proba(X_val)
+        y_prob = probs[:, 1] if probs.ndim == 2 and probs.shape[1] > 1 else probs.ravel()
+    elif hasattr(model, "decision_function"):
+        dfunc = model.decision_function(X_val)
+        # Sigmoid calibration stand-in for margin
+        y_prob = 1.0 / (1.0 + np.exp(-dfunc))
+
+    if y_prob is not None:
+        y_pred = (y_prob >= 0.5).astype(int)
+    else:
+        y_pred = model.predict(X_val).astype(int)
+
+    cand_metrics = candidate_metrics(y_val, y_pred, y_prob)
+
+    # Observation-level Top-1 Accuracy
+    eval_df = val_df[["trip_id", "point_idx", "arc_id"]].copy()
+    eval_df["score"] = y_prob if y_prob is not None else y_pred
+    eval_df["label"] = y_val
+    top1 = top1_accuracy(eval_df, score_col="score")
+
+    # Route continuity if road network trips are provided
+    r_cont = float("nan")
+    if trips_dict:
+        # Pick top candidate per point
+        idx_top = eval_df.groupby(["trip_id", "point_idx"])["score"].idxmax()
+        top_picks = eval_df.loc[idx_top]
+        conts = []
+        for trip_id, group in top_picks.groupby("trip_id"):
+            trip = trips_dict.get(trip_id)
+            if trip is not None and hasattr(trip, "arcs"):
+                pred_seq = group.sort_values("point_idx")["arc_id"].to_numpy()
+                conts.append(route_continuity(pred_seq, trip.arcs))
+        if conts:
+            r_cont = float(np.mean(conts))
+
+    return {
+        "macro_f1": cand_metrics["macro_f1"],
+        "binary_f1": cand_metrics["binary_f1"],
+        "accuracy": cand_metrics["accuracy"],
+        "log_loss": cand_metrics["log_loss"],
+        "top1_acc": top1,
+        "route_continuity": r_cont,
+    }
+
+
+def cross_validate_model(
+    model_fn: Callable[[], Any],
+    train_df: pd.DataFrame,
+    feature_cols: List[str],
+    n_splits: int = 5,
+    seed: int = SEED,
+    trips_dict: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, float], float]:
+    """Run GroupKFold cross-validation grouped strictly by trip_id."""
+    gkf = GroupKFold(n_splits=n_splits)
+    groups = train_df["trip_id"].to_numpy()
+    X = train_df[feature_cols].to_numpy()
+    y = train_df["label"].to_numpy()
+
+    fold_metrics = []
+    fit_times = []
+
+    for fold, (train_idx, val_idx) in enumerate(gkf.split(X, y, groups=groups)):
+        model = model_fn()
+        X_tr, y_tr = X[train_idx], y[train_idx]
+        X_va, y_val = X[val_idx], y[val_idx]
+        val_sub_df = train_df.iloc[val_idx]
+
+        t0 = time.perf_counter()
+        model.fit(X_tr, y_tr)
+        fit_times.append(time.perf_counter() - t0)
+
+        metrics = evaluate_split(model, X_va, y_val, val_sub_df, trips_dict)
+        fold_metrics.append(metrics)
+
+    # Average metrics across folds
+    mean_metrics = {}
+    for key in fold_metrics[0].keys():
+        vals = [fm[key] for fm in fold_metrics if not np.isnan(fm[key])]
+        mean_metrics[key] = float(np.mean(vals)) if vals else float("nan")
+
+    avg_fit_time = float(np.mean(fit_times))
+    return mean_metrics, avg_fit_time
+
+
+def run_experiment(
+    model_name: str,
+    family: str,
+    key_config: str,
+    model_fn: Callable[[], Any],
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    feature_cols: List[str],
+    seed: int = SEED,
+    n_splits: int = 5,
+    train_trips: Optional[Dict[str, Any]] = None,
+    test_trips: Optional[Dict[str, Any]] = None,
+    logger: Optional[ExperimentLogger] = None,
+) -> ExperimentResult:
+    """Execute full training, CV evaluation, student-test evaluation, and logging."""
+    logger = logger or ExperimentLogger()
+
+    print(f"\n=======================================================")
+    print(f"Running Experiment: {model_name} ({family})")
+    print(f"Config: {key_config}")
+    print(f"=======================================================")
+
+    # 1. Grouped Cross-Validation on Train
+    print("[1/3] Running GroupKFold Cross-Validation on train trips...")
+    cv_res, cv_fit_time = cross_validate_model(
+        model_fn=model_fn,
+        train_df=train_df,
+        feature_cols=feature_cols,
+        n_splits=n_splits,
+        seed=seed,
+        trips_dict=train_trips,
+    )
+    print(f"  CV Macro F1: {cv_res['macro_f1']:.4f} | Top-1 Acc: {cv_res['top1_acc']:.4f}")
+
+    # 2. Fit on full train data and evaluate on student-test
+    print("[2/3] Fitting on full training data (80 trips)...")
+    full_model = model_fn()
+    X_train = train_df[feature_cols].to_numpy()
+    y_train = train_df["label"].to_numpy()
+
+    t_start = time.perf_counter()
+    full_model.fit(X_train, y_train)
+    total_train_time = time.perf_counter() - t_start
+
+    print("[3/3] Evaluating on Student-Test partition (10 trips)...")
+    X_test = test_df[feature_cols].to_numpy()
+    y_test = test_df["label"].to_numpy()
+
+    # Measure inference speed
+    t_inf_start = time.perf_counter()
+    test_res = evaluate_split(full_model, X_test, y_test, test_df, test_trips)
+    inf_duration = time.perf_counter() - t_inf_start
+    ms_per_point = (inf_duration / max(1, len(X_test))) * 1000.0
+
+    print(f"  Test Macro F1: {test_res['macro_f1']:.4f} | Test Top-1 Acc: {test_res['top1_acc']:.4f}")
+    print(f"  Train Time: {total_train_time:.2f}s | Inf Speed: {ms_per_point:.4f} ms/point")
+
+    result = ExperimentResult(
+        model_name=model_name,
+        family=family,
+        key_config=key_config,
+        seed=seed,
+        cv_macro_f1=cv_res["macro_f1"],
+        cv_top1_acc=cv_res["top1_acc"],
+        cv_log_loss=cv_res["log_loss"],
+        cv_binary_f1=cv_res["binary_f1"],
+        cv_accuracy=cv_res["accuracy"],
+        cv_route_continuity=cv_res["route_continuity"],
+        test_macro_f1=test_res["macro_f1"],
+        test_top1_acc=test_res["top1_acc"],
+        test_log_loss=test_res["log_loss"],
+        test_binary_f1=test_res["binary_f1"],
+        test_accuracy=test_res["accuracy"],
+        test_route_continuity=test_res["route_continuity"],
+        train_time_sec=total_train_time,
+        inference_time_ms_per_point=ms_per_point,
+        timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+    logger.log(result)
+    return result
