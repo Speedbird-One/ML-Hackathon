@@ -1,15 +1,25 @@
 # PathSnap: ML map-matching with HMM/Viterbi
 
-PathSnap reconstructs a vehicle's route from noisy 1 Hz GPS points by snapping them to a road network.
+PathSnap constructs a vehicle’s trajectory using noisy 1 Hz GPS points and snapping them to a road network.
 
-1. **Candidates.** For every GPS point, list the road arcs within 40 m and compute features (distance, heading agreement, speed, ...).
-2. **Classifier.** A model scores each candidate with the probability that it is the arc the vehicle was on. Five model families were trained and compared; the final classifier is a **tuned LightGBM**.
-3. **HMM/Viterbi decoder.** Uses those probabilities and the road graph's connectivity to pick one coherent route per trip.
+## Team Members
+| SRN | Name |
+|---|---|
+| PES1UG24CS492 | TANMAY T A |
+| PES1UG24CS493 | TANMAYI NAGABHAIRAVA |
+| PES1UG24CS925 | PRATHIKSHA B P |
+| PES1UG24CS928 | RITU RAVISH |
 
-Data note: the 90 provided trips (80 train, 10 student-test) are in many cities worldwide and every trip is its own local map, so each trip is projected into its own metric frame (`Trip.track_xy()`). The evaluator trips are never used in development.
+---
 
-## Installation
-Python 3.13 (3.11/3.12 should also work; avoid 3.14). Full steps, including how to place the data, are in [SETUP.md](SETUP.md); in short:
+1. **Candidates.** For each GPS point, determine road arcs within 40 m and calculate some features (distance, alignment of headings, velocity, ...).
+2. **Classifier.** A model assigns a probability for each candidate arc to be the correct one. Five kinds of models were trained and compared; the final classifier is a tuned LightGBM.
+3. **HMM/Viterbi decoding.** Uses these probabilities and the connectivity of the road graph to choose a consistent trajectory for each trip.
+
+Note about data: 90 trips included in the dataset (80 training, 10 test for students) come from different cities around the world, and each trip constitutes its own map, hence each trip is projected into its own metric coordinate system (`Trip.track_xy()`). Evaluator trips are never seen during development.
+
+## Setup
+Python 3.13 (should work with 3.11 or 3.12; definitely won’t work with 3.14). Complete instructions on how to install everything and where to put your data are in [SETUP.md](SETUP.md); brief summary:
 ```bash
 python -m venv .venv && source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -17,20 +27,89 @@ pip install -r requirements.txt
 python -c "from pathsnap.data import *; print(len(list_trips('train')), len(list_trips('student_test')))"   # expect: 80 10
 ```
 
-## Repository layout
+## Repository structure
 | Path | Contents |
 |---|---|
-| `pathsnap/` | Library: `data.py` (loading, per-trip projection), `labels.py` (per-point reference arcs from the route), `candidates.py` (candidate arcs + features), `metrics.py`, `experiment.py` (grouped-CV harness with timing and logging), `plots.py`, `hmm.py` (HMM/Viterbi decoder), `decode_eval.py` (decoder evaluation helpers) |
-| `scripts/` | Runnable entry points (below) |
-| `notebooks/` | `01_eda.ipynb` (EDA), `02_teammate1_label_speed_checks.ipynb` (label and speed checks) |
-| `artifacts/` | Saved models (`*.joblib`) and the decoder configuration (`hmm_params.json`, written by `tune_hmm.py`) |
-| `results/` | Everything the report cites: logs, tables, figures, maps, HPO and HMM outputs (see "Where the results are") |
+| `pathsnap/` | Library: `data.py` (data loading, trip-wise projections), `labels.py` (point-wise reference arcs of the route), `candidates.py` (candidate arcs + their features), `metrics.py`, `experiment.py` (CV harness with timings & logging), `plots.py`, `hmm.py` (HMM/Viterbi decoding), `decode_eval.py` (helpers for decoder evaluations) |
+| `scripts/` | Entry point scripts (listed below) |
+| `notebooks/` | `01_eda.ipynb` (EDA), `02_teammate1_label_speed_checks.ipynb` (label/speed checks) |
+| `artifacts/` | Model checkpoints (`*.joblib`) and HMM configuration (`hmm_params.json`, saved by `tune_hmm.py`) |
+| `results/` | All referenced by the report: logs, tables, figures, maps, HPO and HMM outputs (refer to "Where the results can be found" for more) |
 | `tests/` | `python tests/test_metrics.py`, `python tests/test_hmm.py` |
-| `data/` | Raw data (git-ignored; see `data/README.md`) |
-| `report/` | `EDA_REPORT.md` (EDA notes); the final technical report is added separately |
+| `data/` | Raw data (git-ignored; refer to `data/README.md`) |
+| `report/` | `EDA_REPORT.md` (EDA notes); the final report is saved as `492_493_925_928_ml_report.pdf` |
 
-## Running the pipeline (in order)
-All commands run from the repository root with the environment active. Every script uses seed 42.
+```text
+ML-Hackathon/
+├── 492_493_925_928_ml_report.pdf       # Final technical report (PDF)
+├── DEPLOY.md                           # Two-laptop Wi-Fi deployment guide
+├── README.md                           # Main repository guide
+├── SETUP.md                            # Environment & candidate build steps
+├── requirements.txt                    # Project dependencies
+├── api/                                # FastAPI backend service
+│   ├── __init__.py
+│   └── main.py                         # REST API (POST /predict, GET /trips)
+├── ui/                                 # Streamlit frontend dashboard
+│   ├── __init__.py
+│   ├── app.py                          # User interface (interactive Folium maps)
+│   ├── api_client.py                   # API communication layer
+│   ├── route_map.py                    # Folium route rendering
+│   └── requirements.txt                # Client-specific requirements
+├── pathsnap/                           # Core map-matching & sequence decoding library
+│   ├── data.py                         # Projection & data ingestion
+│   ├── candidates.py                   # Spatial arc search & 8 feature computation
+│   ├── labels.py                       # Ground-truth route alignment
+│   ├── hmm.py                          # HMM emission & Viterbi trellis decoding
+│   ├── decode_eval.py                  # Route continuity & evaluation helpers
+│   ├── experiment.py                   # 5-fold GroupKFold cross-validation
+│   ├── metrics.py                      # Top-1 accuracy, Macro F1, Log Loss, ECE
+│   └── plots.py                        # Plotting utilities
+├── scripts/                            # Standalone execution scripts
+│   ├── build_candidates.py             # Precomputes candidate tables
+│   ├── eda_extras.py                   # Missing values & connectivity checks
+│   ├── train_lgbm.py                   # Trains LightGBM model
+│   ├── train_rf.py                     # Trains Random Forest model
+│   ├── train_mlp.py                    # Trains Multi-Layer Perceptron
+│   ├── train_logreg.py                 # Trains Logistic Regression
+│   ├── train_nb.py                     # Trains Gaussian Naive Bayes
+│   ├── learning_curve_mlp.py           # Epoch-wise loss history
+│   ├── compare_models.py               # Benchmark comparison on student-test
+│   ├── optimize_lgbm.py                # Bayesian HPO via Optuna TPE
+│   ├── finalize_model_results.py       # Consolidates comparison tables & figures
+│   ├── tune_hmm.py                     # Tunes HMM transition & emission parameters
+│   ├── eval_hmm.py                     # Evaluates HMM vs classifier-only performance
+│   ├── make_map.py                     # Generates Folium HTML maps & static PNGs
+│   └── README.md                       # Guide for running scripts
+├── notebooks/
+│   ├── 01_eda.ipynb                    # Exploratory Data Analysis notebook
+│   └── 02_teammate1_label_speed_checks.ipynb # Speed & spatial label checks
+├── artifacts/                          # Trained models & config files
+│   ├── lgbm.joblib                     # LightGBM untuned baseline
+│   ├── lgbm_tuned.joblib               # LightGBM champion model
+│   ├── rf.joblib                       # Random Forest model
+│   ├── mlp.joblib                      # Multi-Layer Perceptron model
+│   ├── logreg.joblib                   # Logistic Regression model
+│   ├── nb.joblib                       # Gaussian Naive Bayes model
+│   ├── hmm_params.json                 # Tuned HMM parameters
+│   └── inference_config.json           # Model serving configuration
+├── results/                            # All experimental outputs cited in report
+│   ├── eda/                            # Missing value, connectivity & trajectory plots
+│   ├── figures/                        # Comparison bar plots, confusion matrices, map PNGs
+│   ├── tables/                         # CSV and Markdown tables matching rubric
+│   ├── logs/                           # CSV experiment runs per model
+│   ├── scores/                         # Scored prediction parquet files
+│   ├── hpo/                            # Optuna trial logs & comparison curves
+│   ├── hmm/                            # HMM evaluation & where HMM did not help
+│   └── maps/                           # Interactive Folium HTML maps
+├── report/
+│   ├── EDA_REPORT.md                   # Early data exploratory notes
+│   └── 492_493_925_928_ml_report.docx  # Editable Word report
+└── data/                               # Raw data placeholder (git-ignored)
+    └── README.md
+```
+
+## Pipeline execution
+All commands to be executed from the repository root with the environment activated. All scripts employ seed 42.
 ```bash
 # 1. Build the candidate tables (about 30 s). Needed by everything below.
 python scripts/build_candidates.py train student_test
@@ -67,9 +146,9 @@ python scripts/make_map.py --model hmm --trip-id 00000000     # the final pipeli
 # Tests
 python tests/test_metrics.py && python tests/test_hmm.py
 ```
-Per-model scripts, `scripts/optimize_lgbm.py` and `scripts/tune_hmm.py` document their options in their module docstrings (`--help`). `scripts/README.md` explains `make_map.py`.
+Scripts per model (`scripts/optimize_lgbm.py` and `scripts/tune_hmm.py`) have their options described in the module's docstrings (`--help`). Script to run `make_map.py` is described in `scripts/README.md`.
 
-## Where the results are
+## Where the results can be found
 | What | Where |
 |---|---|
 | EDA tables and figures (partition stated in each title) | `results/eda/` (`dataset_summary.csv`, `trip_summary.csv`, `missing_value_*.csv/.png`, `candidate_coverage.csv`, `network_connectivity.csv/.png`, `trip_locations.png`, `trajectory_samples.png`, `representative_trip.png`, `trip_distributions.png`) |
@@ -83,10 +162,14 @@ Per-model scripts, `scripts/optimize_lgbm.py` and `scripts/tune_hmm.py` document
 | Folium maps | `results/maps/` (static versions in `results/figures/`) |
 | Saved models and their student-test scores | `artifacts/`, `results/scores/` |
 
-## Metrics, partitions and rules
-- **Partitions.** Train (80 trips) for fitting, cross-validation (grouped by trip) and tuning; student-test (10 trips) for development comparison only; the evaluator partition is never read.
-- **Labels.** Reference arcs per GPS point are derived from the supplied route (`pathsnap/labels.py`); points with no reference arc are excluded from training and from all metrics.
-- **Top-1** is observation-level: for each labelled GPS point, is the highest-scoring candidate the reference arc. **Route continuity** is the share of consecutive predicted arcs that are the same or directly connected on the road graph.
+## Metrics, partitions, and rules
+- **Partitions.** Training (80 trips) for training, validation (by trips), and parameter tuning; Student test set (10 trips) for development comparisons; the evaluator partition is never seen.
+- **Labels.** The reference arcs per GPS point are determined from the provided route (`pathsnap/labels.py`). If there is no reference arc at a point, then it will not be used in training and all metrics.
+- **Top-1** is point-level: for each labeled GPS point, is the best scoring candidate the reference arc. **Route continuity** is the proportion of sequential arcs which are the same or adjacent on the graph.
 
 ## API, UI and deployment
-Not implemented yet. This section will describe the FastAPI backend (laptop 1), the evaluator UI (laptop 2) and the two-laptop deployment once they exist.
+PathSnap runs across two laptops connected over a local Wi-Fi or mobile hotspot:
+- **Laptop 1 (Model Server):** Runs the FastAPI backend (`uvicorn api.main:app --host 0.0.0.0 --port 8000`) with our trained LightGBM model and HMM decoder. It processes candidate generation, scoring, and Viterbi sequence decoding in ~122 ms per trip.
+- **Laptop 2 (Evaluator Dashboard):** Runs the Streamlit interface (`streamlit run ui/app.py`), letting users select any evaluation trip from a dropdown and view the snapped route on an interactive Folium map with layer controls.
+
+For network setup, firewall rules, and testing commands, see [DEPLOY.md](DEPLOY.md).

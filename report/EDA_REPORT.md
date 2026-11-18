@@ -2,31 +2,31 @@
 
 ## Scope
 
-The EDA covers only the labelled `train` partition. It does not read `student_test` or `evaluator` trips. This keeps evaluation data out of development work.
+EDA only examines the labelled train subset. It will not process student_test or evaluator drives. Thus evaluation data will not be used during the development.
 
-The notebook checks the expected PathSnap trip structure:
+The notebook verifies the expected structure of PathSnap trip:
 
-- GPS track: longitude, latitude, timestamp
-- Road-network nodes and directed arcs
-- Ground-truth route arc IDs
+- GPS trajectory: longitude, latitude, timestamp
+- Graph of road network nodes and edges
+- IDs of ground truth route edges
 
-It measures trip length, elapsed time, sampling interval, GPS movement, route size, network size, invalid route references, and route connectivity. It also creates distribution plots and a map for one representative training trip.
+Trip duration, time passed, sampling interval, GPS displacement, route size, network size, invalid route references, and route connectedness are evaluated. Distribution plots and a map of the example training drive are created.
 
 ## How to run
 
-1. Copy the organiser-provided `train/` directory into `data/`, or set `PATHSNAP_DATA` to its parent directory.
-2. Create the project environment with the commands in `SETUP.md`.
-3. Open and run `notebooks/01_eda.ipynb` from top to bottom.
+1. Place the `train/` directory provided by organisers in `data/`, or set the `PATHSNAP_DATA` variable to the parent directory.
+2. Create the project environment by running the commands in `SETUP.md`.
+3. Execute `notebooks/01_eda.ipynb` notebook from top to bottom.
 
-The notebook creates `results/eda/` locally. Review its CSV summaries and figures before deciding which generated outputs to keep in Git.
+The notebook will create the `results/eda/` directory locally. Examine its CSV statistics and visualisations to decide what generated files to commit.
 
-## Current status
+## Status Quo
 
-The notebook ran on all 80 labelled training trips. It found 208,417 GPS points in total. The median trip has 1,529 GPS points, lasts 1,710 seconds, and has a GPS path length of 24.0 km. The median road network has 9,608 nodes and 19,526.5 directed arcs.
+The notebook was run on all 80 labelled training trips. It identified 208,417 GPS points in total. The median trip contains 1,529 GPS points, takes 1,710 seconds, and has a GPS path length of 24.0 km. The median road network consists of 9,608 nodes and 19,526.5 directed arcs.
 
-Every trip loaded successfully. All route arc IDs are valid and timestamps strictly increase. The median interval is 1 second, but 60 trips contain 7,273 gaps longer than 1.5 seconds. The longest gap is 153,064 seconds. The first run of this notebook assumed a single Darmstadt UTM CRS, which failed for trip `00000057` (Ecuador) and distorted distances for many trips outside Europe. The dataset covers cities worldwide, so `Trip.track_xy()` now projects each trip in its own local metric frame. This report reflects the rerun with that projection; all projected coordinates are finite. There are 13 disconnected transitions across the labelled routes of 10 trips. Inspect these trips before using strict route-continuity assumptions in training or decoding.
+All trips were loaded successfully. Route arc IDs are correct, and the timestamp values strictly increase. The median interval value is 1 second; however, 60 trips include 7,273 intervals larger than 1.5 seconds. The maximum interval length is 153,064 seconds. The first run of this notebook was made under the assumption of one Darmstadt UTM CRS; it resulted in an error for trip `00000057` (Ecuador), and distorted lengths for numerous trips outside Europe. As this dataset includes cities from around the world, `Trip.track_xy()` now projects each trip to its own local metric system. This report reflects the rerun made with this projection applied; all projected coordinates are finite. There are 13 disconnected transitions for the labelled routes of 10 trips. Check those trips before making any route-continuity assumptions during training or decoding.
 
-The generated outputs are:
+The outputs generated are:
 
 - `trip_summary.csv`: one row per training trip
 - `dataset_summary.csv`: dataset-level metrics
@@ -34,25 +34,25 @@ The generated outputs are:
 - `trip_distributions.png`: distributions across trips
 - `representative_trip.png`: GPS, road network, and labelled route
 
-## What to review before modelling
+## Pre-model review items
 
-Use the generated summaries to decide the next modelling steps:
+Based on the generated summary, plan further modelling as follows:
 
-- Keep the current data-load and route-ID checks in the feature pipeline.
-- Distances and speeds use the per-trip projection; trip `00000057` is valid.
-- Split trajectories at large timestamp gaps before calculating distance, speed, candidate transitions, or HMM transitions. The 95th-percentile within-trip speed reaches 45.3 m/s, so use robust distance and speed features.
-- Compare trip and network sizes. Large networks or long tracks affect candidate-search and Viterbi runtime.
-- Inspect the 10 trips with disconnected route transitions. They may indicate data issues or require careful transition handling.
-- Review the representative map before building candidate and emission features.
+- The existing data-load and route-ID filtering must be kept in the feature pipeline.
+- Distances and speeds follow per-trip projection. The validity check for trip `00000057` is true.
+- For distance, speed, candidate transition, and HMM transition calculation, split the trajectories when large gaps exist in the timestamps. Since 95% percentile speed in the trip is 45.3 m/s, robust distances and speeds should be used.
+- Trip and network size comparison is needed since large networks/tracks influence the runtime of candidate search and Viterbi.
+- Examine the 10 trips where the route transitions are disconnected. They may need special treatment either due to data or transition issues.
+- Review the representative map before creating candidate and emission features.
 
-## Modelling prerequisites
+## Prerequisites for modelling
 
-Before trying classifiers or the HMM/Viterbi decoder, the team still needs to define and implement:
+Prior to exploring classification models and HMM/Viterbi decoding, the team will need to specify and code:
 
-1. Candidate-road-arc generation for every GPS point.
-2. Labels that mark whether each candidate is on the ground-truth route at that point.
-3. Features such as point-to-arc distance, heading agreement, GPS speed, and transition distance.
-4. Trip-level train/validation splits to prevent leakage between points from the same trip.
-5. Baseline metrics for candidate recall, classifier quality, route accuracy, and decoding runtime.
+1. Generation of candidate road arcs for every GPS point.
+2. Labelling of candidates whether they belong to the true route at this point.
+3. Features like point-to-arc distance, heading similarity, GPS speed, and transition distance.
+4. Splitting of trips into training and validation to avoid leakage between points of the same trip.
+5. Metrics for candidate recall, classifier performance, route accuracy, and decoding time.
 
-The EDA outputs are inputs to those decisions, not model results.
+EDA output will be used in these decisions, not vice versa.

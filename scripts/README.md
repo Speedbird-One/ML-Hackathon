@@ -1,38 +1,38 @@
-# `scripts/` — Runnable Entry Points
+# `scripts/` – Runnables
 
-This directory contains standalone, runnable entry points for data processing, candidate generation, model training, evaluation, and map visualisations.
-
----
-
-## 🗺️ Map Visualisation Guide (`scripts/make_map.py`)
-
-`scripts/make_map.py` is the team's shared utility for generating both **interactive Folium HTML maps** and **high-resolution 300 DPI publication figures** for the Technical Report (satisfying Section 6 of the hackathon guidelines).
-
-### 4 Mandatory Visual Layers
-1. **Raw GPS Observations**: 1 Hz GPS track points (blue markers with timestamp & coordinate tooltips) plus connecting dashed trajectory.
-2. **Road Network Geometry**: Candidate road network arcs near the vehicle's trajectory (grey line segments).
-3. **Reference Route (Ground Truth)**: Ground truth road route (bold emerald green line, `#2ca02c`).
-4. **Model Predicted Route**: Model top-1 candidate predictions (dashed crimson line, `#d62728`).
-5. **Start & End Markers**: Distinct green play icon (Trip Start) and red stop icon (Trip End).
-6. **HUD Dashboard & Legend**: Floating metadata box showing Ground-Truth Arc Match %, GPS count, and layer color guide.
+This directory contains runnables for data processing, candidate generation, modeling, testing, and visualizing the maps.
 
 ---
 
-### How Each Teammate Uses It
+## Map Visualization (`scripts/make_map.py`)
+
+`scripts/make_map.py` is the collaborative tool provided by the team to create both interactive Folium HTML map and high-resolution maps at 300 DPI for Technical Report (meeting the requirements of Section 6 of hackathon).
+
+### 4 Required Visual Layers
+1. **Raw GPS observations**: 1 Hz GPS track points (blue dots with tooltips containing time & coordinates) along with dashed trajectory line.
+2. **Road network geometry**: Candidate road networks arcs in the proximity of vehicle's trajectory (grey line segments).
+3. **Reference Route**: Ground truth road route (bold emerald green line segment, `#2ca02c`).
+4. **Model predicted route**: Top-1 candidates predicted by the model (dashed crimson line segment, `#d62728`).
+5. **Trip start/end**: Distinct green play icon (Trip Start) and red stop icon (Trip End).
+6. **HUD dashboard & legend**: Floating box for metadata including Ground-Truth Arc Match %, GPS count, and layers' color key.
+
+---
+
+### Usage by Each Teammate
 
 #### 1. Teammate 1: Logistic Regression
-After running your training script (`scripts/train_logreg.py`), generate maps with:
+After training the model using your training script (`scripts/train_logreg.py`), create maps using:
 ```bash
 python scripts/make_map.py --model logreg --trip-id 00000000
 ```
 
 #### 2. Teammate 2: Gaussian Naive Bayes & HMM
-After training Naive Bayes (`scripts/train_nb.py`) or generating HMM decoded routes (`results/scores/hmm_student_test.parquet`):
+After training Naive Bayes (`scripts/train_nb.py`) or creating HMM decoded route maps (`results/scores/hmm_student_test.parquet`):
 ```bash
 python scripts/make_map.py --model nb  --trip-id 00000000
 python scripts/make_map.py --model hmm --trip-id 00000000
 ```
-*(You can also pass a custom parquet/CSV score file via `--scores-path <path>`)*.
+*(You may also provide a custom parquet/CSV score file using `--scores-path <path>`)*.
 
 #### 3. Teammate 3: LightGBM & Random Forest
 ```bash
@@ -40,23 +40,23 @@ python scripts/make_map.py --model lgbm --trip-id 00000000
 python scripts/make_map.py --model rf   --trip-id 00000000
 ```
 
-#### 4. Tanmay: MLP (Neural Network)
+#### 4. Teammate 4: MLP (Neural Network)
 ```bash
 python scripts/make_map.py --model mlp --trip-id 00000000
 ```
 
 ---
 
-### Batch Mode (Generate All Models at Once)
-To generate maps for every model that has scores in `results/scores/`:
+### Batch Mode (Create All Maps at Once)
+To create all possible models' maps which have scores in `results/scores/`:
 ```bash
 python scripts/make_map.py --model all --trip-id 00000000
 ```
 
 ---
 
-### Pure EDA / Ground Truth Map (No Model Predictions)
-To inspect raw GPS and reference routes without running any model:
+### Ground Truth Map (Without Any Model Prediction)
+To check the raw GPS data and ground truth routes without any model predictions:
 ```bash
 python scripts/make_map.py --model none --trip-id 00000000
 ```
@@ -80,7 +80,7 @@ python scripts/make_map.py --model none --trip-id 00000000
 
 ---
 
-## 🏃 Other Scripts in this Directory
+## Other Scripts in this Directory
 
 | Script | Purpose |
 |---|---|
