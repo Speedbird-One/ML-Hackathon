@@ -144,8 +144,18 @@ def plot_confusion_matrix_heatmap(
     print(f"[Plot] Saved confusion matrix for {model_name} to {out}")
 
 
-def plot_mlp_loss_curve(loss_curve: List[float], save_path: Optional[Path] = None):
-    """Plot actual epoch-wise training loss curve for MLP (never fabricated)."""
+def plot_mlp_loss_curve(
+    loss_curve: List[float],
+    save_path: Optional[Path] = None,
+    val_loss: Optional[List[float]] = None,
+    val_score: Optional[List[float]] = None,
+):
+    """Plot the recorded epoch-wise history of a model (never fabricated).
+
+    loss_curve: training loss per epoch. val_loss: validation loss per epoch, if it was recorded.
+    val_score: validation *score* per epoch (sklearn's early-stopping accuracy), drawn on a second
+    axis and labelled as a score, because it is not a loss.
+    """
     if not loss_curve:
         return
         
@@ -153,11 +163,18 @@ def plot_mlp_loss_curve(loss_curve: List[float], save_path: Optional[Path] = Non
     fig, ax = plt.subplots(figsize=(7, 4))
     
     epochs = range(1, len(loss_curve) + 1)
-    ax.plot(epochs, loss_curve, color="#d95f02", lw=2, label="Training Loss")
+    ax.plot(epochs, loss_curve, color="#d95f02", lw=2, label="Training loss")
+    if val_loss:
+        ax.plot(range(1, len(val_loss) + 1), val_loss, color="#1b9e77", lw=2, label="Validation loss")
+    if val_score:
+        ax2 = ax.twinx()
+        ax2.plot(range(1, len(val_score) + 1), val_score, color="#7570b3", lw=1.5, ls="--", label="Validation score (accuracy)")
+        ax2.set_ylabel("Validation score", fontsize=11)
+        ax2.grid(False)
     
     ax.set_xlabel("Epoch / Iteration", fontsize=11, fontweight="bold")
     ax.set_ylabel("Cross-Entropy Loss", fontsize=11, fontweight="bold")
-    ax.set_title("MLP Training Loss History (Actual Execution)", fontsize=12, pad=10)
+    ax.set_title("Training history (recorded during the actual run)", fontsize=12, pad=10)
     ax.legend(frameon=True)
     
     plt.tight_layout()
@@ -185,6 +202,15 @@ def generate_all_plots_and_tables(log_csv_path: Optional[Path] = None):
     plot_cv_macro_f1(latest_df)
     plot_test_comparison(latest_df)
     plot_log_loss_comparison(latest_df)
+
+    # Epoch histories recorded by models that have them (saved by experiment.save_run_outputs
+    # or scripts/mlp_learning_curve.py). Nothing is drawn for models without a history.
+    import json
+    for hist_file in sorted((RESULTS_DIR / "logs").glob("*_history.json")):
+        h = json.loads(hist_file.read_text())
+        name = hist_file.name[: -len("_history.json")]
+        plot_mlp_loss_curve(h.get("loss_curve", []), RESULTS_DIR / "figures" / f"{name}_training_history.png",
+                            val_loss=h.get("val_loss"), val_score=h.get("validation_score"))
     
     # Save a clean markdown table formatted exactly for the report
     table_cols = [
