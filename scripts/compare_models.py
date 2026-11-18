@@ -45,7 +45,7 @@ MODELS = [  # (display name, artifact file stem)
     ("Logistic Regression", "logreg"),
     ("Gaussian Naive Bayes", "nb"),
     ("Random Forest", "rf"),
-    ("LightGBM", "lgbm"),
+    ("LightGBM", "lgbm_untuned"),  # our rerun of the untuned configuration on the shared tables (see results/hpo)
     ("MLP", "mlp"),
 ]
 
