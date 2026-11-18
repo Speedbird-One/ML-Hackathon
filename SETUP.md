@@ -1,6 +1,6 @@
 # Setup (for teammates)
 
-Requires **Python 3.11+** (the team venv uses 3.13). CPU only; no GPU needed.
+Use **Python 3.13** (what the team venv uses and what the code was tested on; 3.11 or 3.12 should also work). One teammate hit native-DLL problems on 3.14, so avoid it. CPU only; no GPU needed.
 
 ## 1. Clone
 ```bash
@@ -39,6 +39,13 @@ export PATHSNAP_DATA=/path/to/folder/containing/train_and_student_test       # b
 python -c "from pathsnap.data import *; print(len(list_trips('train')), len(list_trips('student_test')))"
 ```
 Expected output: `80 10`
+
+## 5. Build the candidate tables (needed before training any model)
+```bash
+python scripts/build_candidates.py train student_test
+```
+Takes about 30 seconds. Writes `cache/candidates_train.parquet` (about 1.46M rows) and `cache/candidates_student_test.parquet` (about 160k rows).
+These are git-ignored, so every teammate builds them locally. Train and evaluate only on rows where `has_ref` is True.
 
 ## Team rules
 - Never commit data, secrets, or the evaluator trips (`.gitignore` covers `data/`).
