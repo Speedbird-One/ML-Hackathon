@@ -1,22 +1,27 @@
 """Interactive Folium and static publication map generation for PathSnap.
 
 Renders 4 mandatory layers as required by Section 6 of Hackathon Guidelines:
-1. Original GPS observations (blue circle markers with timestamp tooltips)
+1. Original GPS observations (blue circle markers with timestamp tooltips + trajectory line)
 2. Relevant road-network geometry (grey candidate arcs near trajectory)
 3. Reference route (ground-truth, solid emerald green)
 4. Predicted route (model top-1 predictions, dashed crimson/coral)
 
-Includes:
-- Distinguishable colours, markers, and line weights
-- LayerControl for toggling individual layers
-- Floating interactive legend & metadata dashboard
-- Start and End trip markers
-- Companion high-res 300 DPI static figure for Technical Report
+Teammate Usage:
+    # 1. Any specific model:
+    python scripts/make_map.py --model lgbm --trip-id 00000000
+    python scripts/make_map.py --model rf   --trip-id 00000000
+    python scripts/make_map.py --model logreg --trip-id 00000000
+    python scripts/make_map.py --model nb   --trip-id 00000000
+    python scripts/make_map.py --model mlp  --trip-id 00000000
 
-Usage:
-    python scripts/make_map.py --model lgbm --partition student_test --trip-id 00000000
-    python scripts/make_map.py --model rf --partition student_test --trip-id 00000000
-    python scripts/make_map.py --model all
+    # 2. Automatically generate maps for all available scored models in results/scores/:
+    python scripts/make_map.py --model all --trip-id 00000000
+
+    # 3. Pure EDA / Reference map (no model predictions, just GPS + Roads + Reference route):
+    python scripts/make_map.py --model none --trip-id 00000000
+
+    # 4. Explicit custom scores file:
+    python scripts/make_map.py --scores-path path/to/custom_scores.parquet --model-name "HMM Decoded"
 """
 import argparse
 import sys
@@ -28,13 +33,22 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 import folium
-from folium import plugins
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 from pathsnap.config import RESULTS_DIR
-from pathsnap.data import Trip, load_trip
+from pathsnap.data import Trip, list_trips, load_trip
+
+MODEL_NAMES = {
+    "lgbm": "LightGBM",
+    "rf": "Random Forest",
+    "logreg": "Logistic Regression",
+    "nb": "Gaussian Naive Bayes",
+    "mlp": "MLP (Neural Net)",
+    "svm": "Linear SVM",
+    "hmm": "HMM / Viterbi Decoded",
+}
 
 
 def load_parquet_scores(path: Path) -> pd.DataFrame:
@@ -61,13 +75,12 @@ def extract_arc_segments(trip: Trip, arc_ids: List[int]) -> List[List[List[float
 
 def build_folium_map(
     trip: Trip,
-    pred_arcs: List[int],
-    cand_arcs: List[int],
+    pred_arcs: Optional[List[int]],
+    cand_arcs: Optional[List[int]],
     model_label: str,
     partition: str,
 ) -> folium.Map:
     """Construct an interactive multi-layer Folium map."""
-    # Compute center coordinates and bounding box
     track = trip.track
     lats = track[:, 1]
     lons = track[:, 0]
@@ -84,17 +97,18 @@ def build_folium_map(
     # -------------------------------------------------------------
     # Layer 1: Road Network (Candidate Arcs near trajectory)
     # -------------------------------------------------------------
-    fg_road = folium.FeatureGroup(name="1. Road Network (Candidate Arcs)", show=False)
-    cand_segments = extract_arc_segments(trip, cand_arcs)
-    if cand_segments:
-        folium.PolyLine(
-            locations=cand_segments,
-            color="#888888",
-            weight=2.0,
-            opacity=0.45,
-            tooltip="Candidate Road Arc",
-        ).add_to(fg_road)
-    fg_road.add_to(m)
+    if cand_arcs:
+        fg_road = folium.FeatureGroup(name="1. Road Network (Candidate Arcs)", show=False)
+        cand_segments = extract_arc_segments(trip, cand_arcs)
+        if cand_segments:
+            folium.PolyLine(
+                locations=cand_segments,
+                color="#888888",
+                weight=2.0,
+                opacity=0.45,
+                tooltip="Candidate Road Arc",
+            ).add_to(fg_road)
+        fg_road.add_to(m)
 
     # -------------------------------------------------------------
     # Layer 2: Original GPS Observations
@@ -110,7 +124,7 @@ def build_folium_map(
         tooltip="GPS Trajectory Line",
     ).add_to(fg_gps)
 
-    # GPS Point Markers (stride to keep HTML responsive if > 1000 points)
+    # GPS Point Markers (stride to keep HTML lightweight if > 1500 points)
     step = 1 if len(track) <= 1500 else 2
     for idx in range(0, len(track), step):
         p = track[idx]
@@ -143,28 +157,28 @@ def build_folium_map(
         fg_ref.add_to(m)
 
     # -------------------------------------------------------------
-    # Layer 4: Model Predicted Route
+    # Layer 4: Model Predicted Route (if model evaluated)
     # -------------------------------------------------------------
-    # Filter consecutive duplicate arcs to keep the route clean
     clean_pred_arcs = []
-    for a in pred_arcs:
-        if not clean_pred_arcs or clean_pred_arcs[-1] != a:
-            clean_pred_arcs.append(a)
+    if pred_arcs:
+        for a in pred_arcs:
+            if not clean_pred_arcs or clean_pred_arcs[-1] != a:
+                clean_pred_arcs.append(a)
 
-    fg_pred = folium.FeatureGroup(
-        name=f"4. Predicted Route ({model_label}, {len(clean_pred_arcs)} arcs)",
-        show=True,
-    )
-    pred_segments = extract_arc_segments(trip, clean_pred_arcs)
-    folium.PolyLine(
-        locations=pred_segments,
-        color="#d62728",
-        weight=3.5,
-        opacity=0.95,
-        dash_array="6, 6",
-        tooltip=f"Predicted Route: {model_label}",
-    ).add_to(fg_pred)
-    fg_pred.add_to(m)
+        fg_pred = folium.FeatureGroup(
+            name=f"4. Predicted Route ({model_label}, {len(clean_pred_arcs)} arcs)",
+            show=True,
+        )
+        pred_segments = extract_arc_segments(trip, clean_pred_arcs)
+        folium.PolyLine(
+            locations=pred_segments,
+            color="#d62728",
+            weight=3.5,
+            opacity=0.95,
+            dash_array="6, 6",
+            tooltip=f"Predicted Route: {model_label}",
+        ).add_to(fg_pred)
+        fg_pred.add_to(m)
 
     # -------------------------------------------------------------
     # Layer 5: Start & End Markers
@@ -192,7 +206,7 @@ def build_folium_map(
     # Title & Metadata Dashboard Overlay
     # -------------------------------------------------------------
     overlap_text = ""
-    if trip.route is not None and gt_count > 0:
+    if trip.route is not None and gt_count > 0 and clean_pred_arcs:
         gt_set = set(trip.route)
         pred_set = set(clean_pred_arcs)
         overlap = len(gt_set.intersection(pred_set))
@@ -229,6 +243,7 @@ def build_folium_map(
     # -------------------------------------------------------------
     # Legend Overlay
     # -------------------------------------------------------------
+    pred_legend_line = f'<span style="color: #d62728; font-weight: bold;">- - -</span> Predicted Route ({model_label})<br>' if pred_arcs else ""
     legend_html = f"""
     <div style="
         position: fixed;
@@ -248,7 +263,7 @@ def build_folium_map(
         <span style="color: #1f77b4; font-size: 14px;">&#9679;</span> GPS Points (Noisy observations)<br>
         <span style="color: #888888; font-weight: bold;">&#8213;</span> Candidate Road Arcs (Network)<br>
         <span style="color: #2ca02c; font-weight: bold;">&#9644;</span> Reference Route (Ground Truth)<br>
-        <span style="color: #d62728; font-weight: bold;">- - -</span> Predicted Route ({model_label})<br>
+        {pred_legend_line}
     </div>
     """
     m.get_root().html.add_child(folium.Element(legend_html))
@@ -260,8 +275,8 @@ def build_folium_map(
 
 def export_static_figure(
     trip: Trip,
-    pred_arcs: List[int],
-    cand_arcs: List[int],
+    pred_arcs: Optional[List[int]],
+    cand_arcs: Optional[List[int]],
     model_label: str,
     partition: str,
     save_path: Path,
@@ -274,11 +289,12 @@ def export_static_figure(
     fig, ax = plt.subplots(figsize=(10, 8), dpi=300)
 
     # 1. Road network candidate arcs
-    cand_segs = extract_arc_segments(trip, cand_arcs)
-    for seg in cand_segs:
-        ax.plot([seg[0][1], seg[1][1]], [seg[0][0], seg[1][0]], color="#cccccc", lw=1.0, zorder=1)
-    if cand_segs:
-        ax.plot([], [], color="#aaaaaa", lw=1.2, label=f"Candidate Road Arcs ({len(cand_arcs)})")
+    if cand_arcs:
+        cand_segs = extract_arc_segments(trip, cand_arcs)
+        for seg in cand_segs:
+            ax.plot([seg[0][1], seg[1][1]], [seg[0][0], seg[1][0]], color="#cccccc", lw=1.0, zorder=1)
+        if cand_segs:
+            ax.plot([], [], color="#aaaaaa", lw=1.2, label=f"Candidate Road Arcs ({len(cand_arcs)})")
 
     # 2. Raw GPS observations
     ax.scatter(lons, lats, c="#1f77b4", s=9, alpha=0.45, label=f"GPS Points ({len(track):,})", zorder=2)
@@ -292,14 +308,15 @@ def export_static_figure(
         ax.plot([], [], color="#2ca02c", lw=4.5, label=f"Reference Route ({len(trip.route)} arcs)")
 
     # 4. Predicted route
-    clean_pred_arcs = []
-    for a in pred_arcs:
-        if not clean_pred_arcs or clean_pred_arcs[-1] != a:
-            clean_pred_arcs.append(a)
-    pred_segs = extract_arc_segments(trip, clean_pred_arcs)
-    for seg in pred_segs:
-        ax.plot([seg[0][1], seg[1][1]], [seg[0][0], seg[1][0]], color="#d62728", lw=2.2, ls="--", alpha=0.95, zorder=4)
-    ax.plot([], [], color="#d62728", lw=2.2, ls="--", label=f"Predicted Route: {model_label}")
+    if pred_arcs:
+        clean_pred_arcs = []
+        for a in pred_arcs:
+            if not clean_pred_arcs or clean_pred_arcs[-1] != a:
+                clean_pred_arcs.append(a)
+        pred_segs = extract_arc_segments(trip, clean_pred_arcs)
+        for seg in pred_segs:
+            ax.plot([seg[0][1], seg[1][1]], [seg[0][0], seg[1][0]], color="#d62728", lw=2.2, ls="--", alpha=0.95, zorder=4)
+        ax.plot([], [], color="#d62728", lw=2.2, ls="--", label=f"Predicted Route: {model_label}")
 
     # 5. Start and End markers
     ax.scatter(lons[0], lats[0], c="green", s=90, marker="^", edgecolors="black", label="Trip Start", zorder=5)
@@ -334,66 +351,99 @@ def generate_map_for_model(
     partition: str = "student_test",
     trip_id: str = "00000000",
     scores_file: Optional[Path] = None,
+    custom_model_label: Optional[str] = None,
     export_png: bool = True,
 ) -> Tuple[Path, Optional[Path]]:
     """Generate both interactive Folium HTML map and static PNG figure."""
-    model_name_map = {
-        "lgbm": "LightGBM",
-        "rf": "Random Forest",
-    }
-    model_label = model_name_map.get(model_key.lower(), model_key.upper())
-
-    # Path to scores
-    scores_path = scores_file or (RESULTS_DIR / "scores" / f"{model_key}_{partition}.parquet")
-    if not scores_path.exists():
-        raise FileNotFoundError(f"Scores parquet not found at {scores_path}. Run training script first.")
+    model_key_clean = model_key.lower().strip()
+    model_label = custom_model_label or MODEL_NAMES.get(model_key_clean, model_key.upper())
 
     print(f"\n[Map] Loading trip {trip_id} ({partition})...")
     trip = load_trip(partition, trip_id)
 
-    print(f"[Map] Loading scores from {scores_path}...")
-    scores_df = load_parquet_scores(scores_path)
-    sub = scores_df[scores_df["trip_id"] == trip_id].copy()
+    pred_arcs = None
+    cand_arcs = None
 
-    if sub.empty:
-        raise ValueError(f"No scores found for trip {trip_id} in {scores_path}")
+    if model_key_clean not in ["none", "eda"]:
+        # Find scores parquet
+        scores_path = scores_file or (RESULTS_DIR / "scores" / f"{model_key_clean}_{partition}.parquet")
+        if not scores_path.exists():
+            raise FileNotFoundError(
+                f"Scores parquet not found at '{scores_path}'.\n"
+                f"To generate scores first, run your training script (e.g., 'python scripts/train_{model_key_clean}.py'), "
+                f"or pass an explicit scores file via '--scores-path <path>'."
+            )
 
-    # Top-1 candidate arc per point
-    best_cands = sub.sort_values(["point_idx", "score"], ascending=[True, False]).groupby("point_idx", as_index=False).first()
-    pred_arcs = best_cands["arc_id"].tolist()
-    cand_arcs = sub["arc_id"].unique().tolist()
+        print(f"[Map] Loading scores from {scores_path}...")
+        scores_df = load_parquet_scores(scores_path)
+        sub = scores_df[scores_df["trip_id"] == trip_id].copy()
+
+        if sub.empty:
+            raise ValueError(f"No scores found for trip {trip_id} in {scores_path}")
+
+        # Top-1 candidate arc per point
+        best_cands = sub.sort_values(["point_idx", "score"], ascending=[True, False]).groupby("point_idx", as_index=False).first()
+        pred_arcs = best_cands["arc_id"].tolist()
+        cand_arcs = sub["arc_id"].unique().tolist()
+    else:
+        model_label = "EDA / Ground Truth"
 
     print(f"[Map] Building interactive Folium map for {model_label}...")
     folium_map = build_folium_map(trip, pred_arcs, cand_arcs, model_label, partition)
 
-    html_out = RESULTS_DIR / "maps" / f"map_{model_key}_{partition}_{trip_id}.html"
+    html_out = RESULTS_DIR / "maps" / f"map_{model_key_clean}_{partition}_{trip_id}.html"
     html_out.parent.mkdir(parents=True, exist_ok=True)
     folium_map.save(str(html_out))
     print(f"[Map] Saved interactive Folium map to {html_out} ({html_out.stat().st_size:,} bytes)")
 
     png_out = None
     if export_png:
-        png_out = RESULTS_DIR / "figures" / f"map_{model_key}_{partition}_{trip_id}.png"
+        png_out = RESULTS_DIR / "figures" / f"map_{model_key_clean}_{partition}_{trip_id}.png"
         export_static_figure(trip, pred_arcs, cand_arcs, model_label, partition, png_out)
 
     return html_out, png_out
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate interactive Folium maps and report figures.")
-    parser.add_argument("--model", type=str, default="lgbm", help="Model key ('lgbm', 'rf', or 'all')")
-    parser.add_argument("--partition", type=str, default="student_test", help="Dataset partition")
-    parser.add_argument("--trip-id", type=str, default="00000000", help="Trip ID to map")
+    parser = argparse.ArgumentParser(description="Generate interactive Folium maps and report figures for any PathSnap model.")
+    parser.add_argument("--model", type=str, default="lgbm", help="Model key ('lgbm', 'rf', 'logreg', 'nb', 'mlp', 'svm', 'none', or 'all')")
+    parser.add_argument("--partition", type=str, default="student_test", help="Dataset partition ('train' or 'student_test')")
+    parser.add_argument("--trip-id", type=str, default="00000000", help="Trip ID to map (e.g. '00000000')")
+    parser.add_argument("--scores-path", type=str, default=None, help="Explicit path to scores parquet/CSV")
+    parser.add_argument("--model-name", type=str, default=None, help="Custom model label to display on map")
     parser.add_argument("--no-png", action="store_true", help="Skip static PNG export")
     args = parser.parse_args()
 
-    models_to_run = ["lgbm", "rf"] if args.model.lower() == "all" else [args.model.lower()]
+    scores_p = Path(args.scores_path) if args.scores_path else None
 
-    for m in models_to_run:
+    if args.model.lower() == "all":
+        # Find all score parquets in results/scores
+        scores_dir = RESULTS_DIR / "scores"
+        available_scores = list(scores_dir.glob(f"*_{args.partition}.parquet"))
+        if not available_scores:
+            print(f"[Map] No score files found in {scores_dir} matching *_{args.partition}.parquet")
+            return
+
+        for sc in available_scores:
+            # model_key is prefix before _{partition}.parquet
+            m_key = sc.name.replace(f"_{args.partition}.parquet", "")
+            try:
+                generate_map_for_model(
+                    model_key=m_key,
+                    partition=args.partition,
+                    trip_id=args.trip_id,
+                    scores_file=sc,
+                    export_png=not args.no_png,
+                )
+            except Exception as e:
+                print(f"[Map Warning] Failed generating map for {m_key}: {e}")
+    else:
         generate_map_for_model(
-            model_key=m,
+            model_key=args.model,
             partition=args.partition,
             trip_id=args.trip_id,
+            scores_file=scores_p,
+            custom_model_label=args.model_name,
             export_png=not args.no_png,
         )
 
