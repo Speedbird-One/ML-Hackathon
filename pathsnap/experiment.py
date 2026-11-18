@@ -127,7 +127,12 @@ def save_run_outputs(save_name: str, model: Any, test_df: pd.DataFrame, scores: 
     scores_dir.mkdir(parents=True, exist_ok=True)
     out = test_df[["trip_id", "point_idx", "arc_id"]].copy()
     out["score"] = scores
-    out.to_parquet(scores_dir / f"{save_name}_student_test.parquet", index=False)
+    pq_path = scores_dir / f"{save_name}_student_test.parquet"
+    try:
+        out.to_parquet(pq_path, index=False)
+    except Exception:
+        import duckdb
+        duckdb.sql("SELECT * FROM out").write_parquet(str(pq_path))
 
     # Real epoch-wise history, only for estimators that record one (e.g. sklearn MLP). Never fabricated.
     est = model.steps[-1][1] if hasattr(model, "steps") else model
