@@ -77,96 +77,91 @@ def candidate_confusion_matrix(
 # Observation-level metrics (Per GPS point)
 # -------------------------------------------------------------------------
 
+def _labelled_only(candidates_df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only rows of GPS points that have a reference arc (has_ref True).
+
+    Points without a reference (label -1 from pathsnap.labels) must not count as
+    all-negative rows or as 'misses'.
+    """
+    if "has_ref" in candidates_df.columns:
+        return candidates_df[candidates_df["has_ref"].to_numpy(dtype=bool)]
+    return candidates_df
+
+
 def top1_accuracy(
     candidates_df: pd.DataFrame,
     ref_arcs: Optional[Union[np.ndarray, pd.Series, Dict[Tuple[str, int], int]]] = None,
     score_col: str = "score",
 ) -> float:
-    """Compute observation-level Top-1 Accuracy.
-    
-    For each GPS point (grouped by trip_id, point_idx), pick the candidate
-    with the maximum score. Compare that candidate's arc_id with ref_arc.
-    Points with ref_arc == -1 (unmatched/no reference) are excluded.
-    
-    Args:
-        candidates_df: DataFrame with ['trip_id', 'point_idx', 'arc_id', score_col]
-        ref_arcs: Optional mapping (trip_id, point_idx) -> ref_arc.
-                  If not provided, uses 'ref_arc' column or evaluates via 'label' column.
-        score_col: Name of predicted probability/score column.
+    """Observation-level Top-1 Accuracy.
+
+    For each labelled GPS point (grouped by trip_id, point_idx) pick the candidate with the
+    highest score and check it is the reference arc. Points whose reference arc is not among
+    the candidates count as WRONG (a miss is a failure of the whole pipeline). Points with no
+    reference (has_ref False / ref_arc -1) are excluded. Points with no candidates at all do
+    not appear in the table and are not counted here; report candidate_miss_rate with
+    n_labelled_points to account for them.
+
+    Reference source, in order: `ref_arcs` dict {(trip_id, point_idx): arc}, a `ref_arc`
+    column, or the `label` column (1 = reference arc).
     """
-    if len(candidates_df) == 0:
+    df = _labelled_only(candidates_df)
+    if len(df) == 0:
         return 0.0
 
-    df = candidates_df
-    idx_top = df.groupby(["trip_id", "point_idx"])[score_col].idxmax().to_numpy()
-    top_candidates = df.loc[idx_top, ["trip_id", "point_idx", "arc_id"]].copy()
+    grp = df.groupby(["trip_id", "point_idx"])[score_col]
+    idx_top = grp.idxmax().to_numpy()
+    top = df.loc[idx_top, ["trip_id", "point_idx", "arc_id"]].copy()
 
-    # Ground truth determination
     if isinstance(ref_arcs, dict) and len(ref_arcs) > 0:
-        top_candidates["ref_arc"] = [
-            ref_arcs.get((r.trip_id, r.point_idx), -1)
-            for r in top_candidates.itertuples()
-        ]
-        valid = top_candidates[top_candidates["ref_arc"] >= 0]
-        if len(valid) == 0:
-            return 0.0
-        return float((valid["arc_id"] == valid["ref_arc"]).mean())
-    elif "ref_arc" in df.columns:
-        top_candidates["ref_arc"] = df.loc[idx_top, "ref_arc"].to_numpy()
-        valid = top_candidates[top_candidates["ref_arc"] >= 0]
-        if len(valid) == 0:
-            return 0.0
-        return float((valid["arc_id"] == valid["ref_arc"]).mean())
-    elif "label" in df.columns:
-        # Check if the highest-scoring candidate has label == 1
-        labels_at_top = df.loc[idx_top, "label"].to_numpy()
-        # Find points that had at least one candidate with label == 1 (i.e. ground truth exists in candidates)
-        has_true_label = df.groupby(["trip_id", "point_idx"])["label"].max().to_numpy()
-        valid_mask = has_true_label == 1
-        if not np.any(valid_mask):
-            return 0.0
-        correct = (labels_at_top == 1) & valid_mask
-        return float(correct.sum() / valid_mask.sum())
-    else:
-        raise ValueError("Must provide ref_arcs dict or include 'ref_arc'/'label' in candidates_df")
-
-    # Filter out points with no valid reference (-1)
-    valid = top_candidates[top_candidates["ref_arc"] >= 0]
-    if len(valid) == 0:
-        return 0.0
-    return float((valid["arc_id"] == valid["ref_arc"]).mean())
+        top["ref_arc"] = [ref_arcs.get((r.trip_id, r.point_idx), -1) for r in top.itertuples()]
+        valid = top[top["ref_arc"] >= 0]
+        return float((valid["arc_id"] == valid["ref_arc"]).mean()) if len(valid) else 0.0
+    if "ref_arc" in df.columns:
+        top["ref_arc"] = df.loc[idx_top, "ref_arc"].to_numpy()
+        valid = top[top["ref_arc"] >= 0]
+        return float((valid["arc_id"] == valid["ref_arc"]).mean()) if len(valid) else 0.0
+    if "label" in df.columns:
+        # every point in `df` is labelled; it is correct only if the top pick is the reference arc
+        return float((df.loc[idx_top, "label"].to_numpy() == 1).mean())
+    raise ValueError("Must provide ref_arcs dict or include 'ref_arc'/'label' in candidates_df")
 
 
 def candidate_miss_rate(
     candidates_df: pd.DataFrame,
-    ref_arcs: Union[np.ndarray, pd.Series, Dict[Tuple[str, int], int]],
+    ref_arcs: Optional[Dict[Tuple[str, int], int]] = None,
+    n_labelled_points: Optional[int] = None,
 ) -> float:
-    """Compute the candidate miss rate.
-    
-    Proportion of GPS observation points where the ground-truth ref_arc >= 0
-    is NOT present among the generated candidate arcs for that point.
+    """Share of labelled GPS points whose reference arc is NOT among the candidates.
+
+    Modes:
+      * `ref_arcs` dict {(trip_id, point_idx): arc_id} (non-empty): exact, also counts points
+        that have no candidate rows at all.
+      * otherwise uses the `label` column (1 = reference arc). Only points that appear in the
+        table can be seen, so pass `n_labelled_points` (the true number of labelled points,
+        e.g. from pathsnap.labels) to include points with no candidates at all in the
+        denominator and count them as misses. Without it, the rate is an underestimate.
     """
-    if isinstance(ref_arcs, dict):
-        points = list(ref_arcs.keys())
-        total_valid = 0
-        missed = 0
+    if isinstance(ref_arcs, dict) and len(ref_arcs) > 0:
         grouped = candidates_df.groupby(["trip_id", "point_idx"])["arc_id"].apply(set)
+        total_valid = missed = 0
         for (trip_id, pt_idx), true_arc in ref_arcs.items():
             if true_arc < 0:
                 continue
             total_valid += 1
-            cands = grouped.get((trip_id, pt_idx), set())
-            if true_arc not in cands:
+            if true_arc not in grouped.get((trip_id, pt_idx), set()):
                 missed += 1
         return float(missed / total_valid) if total_valid > 0 else 0.0
-    elif "label" in candidates_df.columns:
-        # If 'label' is 1 for true arc and 0 otherwise:
-        # A point has a hit if max(label) == 1, else missed.
-        has_hit = candidates_df.groupby(["trip_id", "point_idx"])["label"].max()
-        # Only evaluate points that actually have a reference (where label is present)
-        return float((has_hit == 0).mean())
-    else:
-        raise ValueError("Must provide ref_arcs dict or 'label' column in candidates_df")
+
+    if "label" not in candidates_df.columns:
+        raise ValueError("Must provide a non-empty ref_arcs dict or a 'label' column in candidates_df")
+
+    df = _labelled_only(candidates_df)
+    has_hit = df.groupby(["trip_id", "point_idx"])["label"].max()
+    n_seen = len(has_hit)
+    n_hit = int((has_hit == 1).sum())
+    total = max(n_labelled_points, n_seen) if n_labelled_points is not None else n_seen
+    return float((total - n_hit) / total) if total > 0 else 0.0
 
 
 # -------------------------------------------------------------------------
@@ -295,9 +290,9 @@ def evaluate_all(
     
     # Top-1 observation accuracy
     if "score" in candidates_df.columns:
-        res["top1_accuracy"] = top1_accuracy(candidates_df, ref_arcs={}, score_col="score")
+        res["top1_accuracy"] = top1_accuracy(candidates_df, score_col="score")
     if "label" in candidates_df.columns:
-        res["candidate_miss_rate"] = candidate_miss_rate(candidates_df, ref_arcs={})
+        res["candidate_miss_rate"] = candidate_miss_rate(candidates_df)
         
     # Route continuity if trip road networks are provided
     if predicted_arcs_by_trip and trips_dict:

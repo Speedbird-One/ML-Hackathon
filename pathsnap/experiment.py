@@ -17,11 +17,22 @@ from sklearn.model_selection import GroupKFold
 
 from .config import RESULTS_DIR, SEED
 from .metrics import (
+    _labelled_only,
+    build_adjacency,
     candidate_metrics,
     candidate_miss_rate,
     route_continuity,
     top1_accuracy,
 )
+
+# Road-graph adjacency is expensive to build (up to ~165k arcs per trip); build once per trip.
+_ADJ_CACHE: Dict[str, Dict[int, List[int]]] = {}
+
+
+def _adjacency_for(trip_id: str, trip: Any) -> Dict[int, List[int]]:
+    if trip_id not in _ADJ_CACHE:
+        _ADJ_CACHE[trip_id] = build_adjacency(trip.arcs)
+    return _ADJ_CACHE[trip_id]
 
 
 @dataclass
@@ -137,7 +148,7 @@ def evaluate_split(
             trip = trips_dict.get(trip_id)
             if trip is not None and hasattr(trip, "arcs"):
                 pred_seq = group.sort_values("point_idx")["arc_id"].to_numpy()
-                conts.append(route_continuity(pred_seq, trip.arcs))
+                conts.append(route_continuity(pred_seq, trip.arcs, _adjacency_for(trip_id, trip)))
         if conts:
             r_cont = float(np.mean(conts))
 
@@ -159,7 +170,11 @@ def cross_validate_model(
     seed: int = SEED,
     trips_dict: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, float], float]:
-    """Run GroupKFold cross-validation grouped strictly by trip_id."""
+    """Run GroupKFold cross-validation grouped strictly by trip_id.
+
+    Only points with a reference arc (has_ref) are used; others carry no valid label.
+    """
+    train_df = _labelled_only(train_df).reset_index(drop=True)
     gkf = GroupKFold(n_splits=n_splits)
     groups = train_df["trip_id"].to_numpy()
     X = train_df[feature_cols].to_numpy()
@@ -207,6 +222,9 @@ def run_experiment(
 ) -> ExperimentResult:
     """Execute full training, CV evaluation, student-test evaluation, and logging."""
     logger = logger or ExperimentLogger()
+    # Points without a reference arc are excluded from training and from every metric.
+    train_df = _labelled_only(train_df).reset_index(drop=True)
+    test_df = _labelled_only(test_df).reset_index(drop=True)
 
     print(f"\n=======================================================")
     print(f"Running Experiment: {model_name} ({family})")
