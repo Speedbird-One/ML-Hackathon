@@ -5,17 +5,19 @@ Provides:
 - Standardized evaluation on 80 train trips and 10 student-test trips
 - Comprehensive logging to results/logs/experiments.csv
 """
+import json
 import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupKFold
 
-from .config import RESULTS_DIR, SEED
+from .config import ARTIFACTS_DIR, RESULTS_DIR, SEED
 from .metrics import (
     _labelled_only,
     build_adjacency,
@@ -104,6 +106,37 @@ class ExperimentLogger:
         if self.log_path.exists():
             return pd.read_csv(self.log_path)
         return pd.DataFrame()
+
+
+def score_model(model: Any, X: np.ndarray) -> np.ndarray:
+    """P(candidate is the reference arc) for each row (probability, else sigmoid of margin, else hard label)."""
+    if hasattr(model, "predict_proba"):
+        probs = model.predict_proba(X)
+        return probs[:, 1] if probs.ndim == 2 and probs.shape[1] > 1 else probs.ravel()
+    if hasattr(model, "decision_function"):
+        return 1.0 / (1.0 + np.exp(-model.decision_function(X)))
+    return model.predict(X).astype(float)
+
+
+def save_run_outputs(save_name: str, model: Any, test_df: pd.DataFrame, scores: np.ndarray) -> None:
+    """Persist what other components need: fitted model, student-test scores, MLP loss history."""
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, ARTIFACTS_DIR / f"{save_name}.joblib")
+
+    scores_dir = RESULTS_DIR / "scores"
+    scores_dir.mkdir(parents=True, exist_ok=True)
+    out = test_df[["trip_id", "point_idx", "arc_id"]].copy()
+    out["score"] = scores
+    out.to_parquet(scores_dir / f"{save_name}_student_test.parquet", index=False)
+
+    # Real epoch-wise history, only for estimators that record one (e.g. sklearn MLP). Never fabricated.
+    est = model.steps[-1][1] if hasattr(model, "steps") else model
+    if getattr(est, "loss_curve_", None) is not None:
+        hist = {"loss_curve": [float(v) for v in est.loss_curve_]}
+        if getattr(est, "validation_scores_", None) is not None:
+            hist["validation_score"] = [float(v) for v in est.validation_scores_]
+        (RESULTS_DIR / "logs").mkdir(parents=True, exist_ok=True)
+        (RESULTS_DIR / "logs" / f"{save_name}_history.json").write_text(json.dumps(hist))
 
 
 def evaluate_split(
@@ -219,6 +252,7 @@ def run_experiment(
     train_trips: Optional[Dict[str, Any]] = None,
     test_trips: Optional[Dict[str, Any]] = None,
     logger: Optional[ExperimentLogger] = None,
+    save_name: Optional[str] = None,
 ) -> ExperimentResult:
     """Execute full training, CV evaluation, student-test evaluation, and logging."""
     logger = logger or ExperimentLogger()
@@ -257,11 +291,15 @@ def run_experiment(
     X_test = test_df[feature_cols].to_numpy()
     y_test = test_df["label"].to_numpy()
 
-    # Measure inference speed
+    # Inference time: time ONLY the model's scoring call (not metric computation), per GPS point.
     t_inf_start = time.perf_counter()
-    test_res = evaluate_split(full_model, X_test, y_test, test_df, test_trips)
+    test_scores = score_model(full_model, X_test)
     inf_duration = time.perf_counter() - t_inf_start
-    ms_per_point = (inf_duration / max(1, len(X_test))) * 1000.0
+    n_points = max(1, test_df.groupby(["trip_id", "point_idx"]).ngroups)
+    ms_per_point = inf_duration / n_points * 1000.0
+    test_res = evaluate_split(full_model, X_test, y_test, test_df, test_trips)
+    if save_name:
+        save_run_outputs(save_name, full_model, test_df, test_scores)
 
     print(f"  Test Macro F1: {test_res['macro_f1']:.4f} | Test Top-1 Acc: {test_res['top1_acc']:.4f}")
     print(f"  Train Time: {total_train_time:.2f}s | Inf Speed: {ms_per_point:.4f} ms/point")
