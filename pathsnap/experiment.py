@@ -61,6 +61,16 @@ class ExperimentResult:
     train_time_sec: float
     inference_time_ms_per_point: float
     timestamp: str
+    # Added for the report's overfitting / stability / per-class evidence (NaN if not computed)
+    cv_macro_f1_std: float = float("nan")
+    cv_top1_std: float = float("nan")
+    cv_log_loss_std: float = float("nan")
+    test_precision: float = float("nan")
+    test_recall: float = float("nan")
+    test_candidate_miss_rate: float = float("nan")  # on candidates present in the table only
+    train_macro_f1: float = float("nan")
+    train_top1_acc: float = float("nan")
+    train_log_loss: float = float("nan")
 
 
 class ExperimentLogger:
@@ -73,32 +83,15 @@ class ExperimentLogger:
 
     def _ensure_header(self):
         if not self.log_path.exists():
-            headers = [
-                "model_name",
-                "family",
-                "key_config",
-                "seed",
-                "cv_macro_f1",
-                "cv_top1_acc",
-                "cv_log_loss",
-                "cv_binary_f1",
-                "cv_accuracy",
-                "cv_route_continuity",
-                "test_macro_f1",
-                "test_top1_acc",
-                "test_log_loss",
-                "test_binary_f1",
-                "test_accuracy",
-                "test_route_continuity",
-                "train_time_sec",
-                "inference_time_ms_per_point",
-                "timestamp",
-            ]
-            pd.DataFrame(columns=headers).to_csv(self.log_path, index=False)
+            pd.DataFrame(columns=list(ExperimentResult.__dataclass_fields__)).to_csv(self.log_path, index=False)
 
     def log(self, result: ExperimentResult):
-        df_row = pd.DataFrame([asdict(result)])
-        df_row.to_csv(self.log_path, mode="a", header=not self.log_path.exists(), index=False)
+        """Append one row. Rewrites the (tiny) file so older logs with fewer columns stay valid."""
+        new = pd.DataFrame([asdict(result)])
+        if self.log_path.exists() and self.log_path.stat().st_size > 0:
+            old = pd.read_csv(self.log_path)
+            new = pd.concat([old, new], ignore_index=True) if len(old) else new
+        new.to_csv(self.log_path, index=False)
         print(f"[Logger] Logged {result.model_name} ({result.family}) to {self.log_path}")
 
     def load_table(self) -> pd.DataFrame:
@@ -137,6 +130,18 @@ def save_run_outputs(save_name: str, model: Any, test_df: pd.DataFrame, scores: 
             hist["validation_score"] = [float(v) for v in est.validation_scores_]
         (RESULTS_DIR / "logs").mkdir(parents=True, exist_ok=True)
         (RESULTS_DIR / "logs" / f"{save_name}_history.json").write_text(json.dumps(hist))
+
+
+def _save_confusion(save_name: str, model_name: str, y_true: np.ndarray, scores: np.ndarray) -> None:
+    """Save the student-test confusion matrix (threshold 0.5) as JSON and as a figure."""
+    from .metrics import candidate_confusion_matrix
+    from .plots import plot_confusion_matrix_heatmap
+
+    cm = candidate_confusion_matrix(y_true, (scores >= 0.5).astype(int))
+    (RESULTS_DIR / "logs").mkdir(parents=True, exist_ok=True)
+    (RESULTS_DIR / "logs" / f"{save_name}_confusion.json").write_text(json.dumps({"labels": [0, 1], "matrix": cm.tolist()}))
+    (RESULTS_DIR / "figures").mkdir(parents=True, exist_ok=True)
+    plot_confusion_matrix_heatmap(cm, model_name, RESULTS_DIR / "figures" / f"confusion_{save_name}.png")
 
 
 def evaluate_split(
@@ -189,6 +194,8 @@ def evaluate_split(
         "macro_f1": cand_metrics["macro_f1"],
         "binary_f1": cand_metrics["binary_f1"],
         "accuracy": cand_metrics["accuracy"],
+        "precision": cand_metrics["precision"],
+        "recall": cand_metrics["recall"],
         "log_loss": cand_metrics["log_loss"],
         "top1_acc": top1,
         "route_continuity": r_cont,
@@ -234,6 +241,7 @@ def cross_validate_model(
     for key in fold_metrics[0].keys():
         vals = [fm[key] for fm in fold_metrics if not np.isnan(fm[key])]
         mean_metrics[key] = float(np.mean(vals)) if vals else float("nan")
+        mean_metrics[key + "_std"] = float(np.std(vals)) if vals else float("nan")
 
     avg_fit_time = float(np.mean(fit_times))
     return mean_metrics, avg_fit_time
@@ -253,6 +261,7 @@ def run_experiment(
     test_trips: Optional[Dict[str, Any]] = None,
     logger: Optional[ExperimentLogger] = None,
     save_name: Optional[str] = None,
+    compute_train_metrics: bool = True,
 ) -> ExperimentResult:
     """Execute full training, CV evaluation, student-test evaluation, and logging."""
     logger = logger or ExperimentLogger()
@@ -300,6 +309,13 @@ def run_experiment(
     test_res = evaluate_split(full_model, X_test, y_test, test_df, test_trips)
     if save_name:
         save_run_outputs(save_name, full_model, test_df, test_scores)
+        _save_confusion(save_name, model_name, y_test, test_scores)
+    miss_rate = candidate_miss_rate(test_df)
+
+    # Training-set metrics: the evidence for the report's "overfitting or underfitting?" question.
+    train_res = {"macro_f1": float("nan"), "top1_acc": float("nan"), "log_loss": float("nan")}
+    if compute_train_metrics:
+        train_res = evaluate_split(full_model, X_train, y_train, train_df, None)
 
     print(f"  Test Macro F1: {test_res['macro_f1']:.4f} | Test Top-1 Acc: {test_res['top1_acc']:.4f}")
     print(f"  Train Time: {total_train_time:.2f}s | Inf Speed: {ms_per_point:.4f} ms/point")
@@ -324,6 +340,15 @@ def run_experiment(
         train_time_sec=total_train_time,
         inference_time_ms_per_point=ms_per_point,
         timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+        cv_macro_f1_std=cv_res.get("macro_f1_std", float("nan")),
+        cv_top1_std=cv_res.get("top1_acc_std", float("nan")),
+        cv_log_loss_std=cv_res.get("log_loss_std", float("nan")),
+        test_precision=test_res["precision"],
+        test_recall=test_res["recall"],
+        test_candidate_miss_rate=miss_rate,
+        train_macro_f1=train_res["macro_f1"],
+        train_top1_acc=train_res["top1_acc"],
+        train_log_loss=train_res["log_loss"],
     )
 
     logger.log(result)
