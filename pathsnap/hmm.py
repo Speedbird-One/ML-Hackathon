@@ -429,13 +429,12 @@ def decode(
                         best_p = total_p
                         best_i = i
 
-                # If all transitions are unreachable, reset Viterbi at state j
-                if best_i == -1 or best_p <= (unreach_pen + 1.0):
-                    curr_v[j] = log_em_j
-                    curr_bp[j] = -1
-                else:
-                    curr_v[j] = best_p
-                    curr_bp[j] = best_i
+                # Unreachable transitions already carry the finite penalty `unreach_pen`, so Viterbi
+                # handles them without special casing. (An earlier version reset the chain whenever
+                # the ACCUMULATED log-probability fell below unreach_pen + 1; that is true after a few
+                # hundred points on any trip, so it silently restarted decoding at almost every step.)
+                curr_v[j] = best_p
+                curr_bp[j] = best_i
 
             # Check if all states in current step reset: ensure finite probabilities
             if np.all(np.isneginf(curr_v)):
