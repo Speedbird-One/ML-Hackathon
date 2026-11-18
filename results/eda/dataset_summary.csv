@@ -3,10 +3,10 @@ training_trips,80.0
 total_gps_points,208417.0
 median_gps_points,1529.0
 median_duration_s,1710.0014999999999
-median_gps_path_m,26841.747041462357
+median_gps_path_m,24038.45120160593
 median_nodes,9608.0
 median_arcs,19526.5
-nonfinite_projected_gps_points,1645.0
+nonfinite_projected_gps_points,0.0
 intervals_over_1_5s,7273.0
 invalid_route_arcs,0.0
 disconnected_route_transitions,13.0

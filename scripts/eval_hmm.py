@@ -1,4 +1,4 @@
-﻿"""Evaluation and verification script for HMM / Viterbi decoder.
+"""Evaluation and verification script for HMM / Viterbi decoder.
 
 Runs decode() on a real trip, checks execution speed, route continuity,
 and sequence recovery against the reference route.

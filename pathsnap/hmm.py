@@ -1,4 +1,4 @@
-﻿"""Hidden Markov Model (HMM) and Viterbi decoder for route reconstruction.
+"""Hidden Markov Model (HMM) and Viterbi decoder for route reconstruction.
 
 This module turns per-candidate road segments and classifier scores into
 a coherent, topologically connected route across an entire GPS trip.

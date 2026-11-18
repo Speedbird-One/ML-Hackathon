@@ -22,9 +22,9 @@ The notebook creates `results/eda/` locally. Review its CSV summaries and figure
 
 ## Current status
 
-The notebook ran on all 80 labelled training trips. It found 208,417 GPS points in total. The median trip has 1,529 GPS points, lasts 1,710 seconds, and has a GPS path length of 26.8 km. The median road network has 9,608 nodes and 19,526.5 directed arcs.
+The notebook ran on all 80 labelled training trips. It found 208,417 GPS points in total. The median trip has 1,529 GPS points, lasts 1,710 seconds, and has a GPS path length of 24.0 km. The median road network has 9,608 nodes and 19,526.5 directed arcs.
 
-Every trip loaded successfully. All route arc IDs are valid and timestamps strictly increase. The median interval is 1 second, but 60 trips contain 7,273 gaps longer than 1.5 seconds. The longest gap is 153,064 seconds. Trip `00000057` does not project into the configured Darmstadt UTM CRS and needs coordinate validation before it is used for distance-based features. There are 13 disconnected transitions across the labelled routes of 10 trips. Inspect these trips before using strict route-continuity assumptions in training or decoding.
+Every trip loaded successfully. All route arc IDs are valid and timestamps strictly increase. The median interval is 1 second, but 60 trips contain 7,273 gaps longer than 1.5 seconds. The longest gap is 153,064 seconds. The first run of this notebook assumed a single Darmstadt UTM CRS, which failed for trip `00000057` (Ecuador) and distorted distances for many trips outside Europe. The dataset covers cities worldwide, so `Trip.track_xy()` now projects each trip in its own local metric frame. This report reflects the rerun with that projection; all projected coordinates are finite. There are 13 disconnected transitions across the labelled routes of 10 trips. Inspect these trips before using strict route-continuity assumptions in training or decoding.
 
 The generated outputs are:
 
@@ -39,8 +39,8 @@ The generated outputs are:
 Use the generated summaries to decide the next modelling steps:
 
 - Keep the current data-load and route-ID checks in the feature pipeline.
-- Validate or exclude trip `00000057` before using projected distance features.
-- Split trajectories at large timestamp gaps before calculating distance, speed, candidate transitions, or HMM transitions. The 95th-percentile within-trip speed reaches 53.7 m/s, so use robust distance and speed features.
+- Distances and speeds use the per-trip projection; trip `00000057` is valid.
+- Split trajectories at large timestamp gaps before calculating distance, speed, candidate transitions, or HMM transitions. The 95th-percentile within-trip speed reaches 45.3 m/s, so use robust distance and speed features.
 - Compare trip and network sizes. Large networks or long tracks affect candidate-search and Viterbi runtime.
 - Inspect the 10 trips with disconnected route transitions. They may indicate data issues or require careful transition handling.
 - Review the representative map before building candidate and emission features.

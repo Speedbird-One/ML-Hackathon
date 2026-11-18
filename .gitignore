@@ -12,6 +12,7 @@ data/*
 # Caches and secrets
 cache/
 *.parquet
+!results/scores/*.parquet
 .env
 *.key
 
