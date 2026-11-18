@@ -1,7 +1,7 @@
-"""Build candidate tables (with reference labels) for a partition and cache them as parquet.
+"""Build candidate tables (with reference labels) for a partition and cache them as parquet (or csv.gz fallback).
 
 Usage: python scripts/build_candidates.py train student_test [--radius 40]
-Output: cache/candidates_<partition>.parquet  (git-ignored)
+Output: cache/candidates_<partition>.parquet or .csv.gz (git-ignored)
 """
 import argparse
 import sys
@@ -29,7 +29,13 @@ for part in args.partitions:
         frames.append(generate_candidates(trip, args.radius, derive_ref_arcs(trip).ref_arc))
     df = pd.concat(frames, ignore_index=True)
     out = CACHE_DIR / f"candidates_{part}.parquet"
-    df.to_parquet(out, index=False)
+    try:
+        df.to_parquet(out, index=False)
+        saved_path = out
+    except Exception:
+        out_csv = CACHE_DIR / f"candidates_{part}.csv.gz"
+        df.to_csv(out_csv, index=False, compression="gzip")
+        saved_path = out_csv
     ref = df[df.has_ref]
     print(f"{part}: {len(df):,} rows, {df.trip_id.nunique()} trips, radius {args.radius} m, "
-          f"positive rate (labelled points) {ref.label.mean():.3f} -> {out}")
+          f"positive rate (labelled points) {ref.label.mean():.3f} -> {saved_path}")
