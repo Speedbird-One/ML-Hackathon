@@ -20,3 +20,5 @@ cache/
 Thumbs.db
 .vscode/
 .idea/
+
+requirements-local.txt
