@@ -23,3 +23,6 @@ Thumbs.db
 .idea/
 
 requirements-local.txt
+
+# Optuna resume database (the trials CSV and best_params.json are the committed record)
+results/hpo/*.db

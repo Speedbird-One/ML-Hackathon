@@ -1,0 +1,80 @@
+{
+  "objective": "mean CV log_loss (minimize)",
+  "cv": "GroupKFold(5) by trip_id on 80 train trips",
+  "sampler": "TPE (Bayesian), 8 random start-up trials",
+  "pruner": "MedianPruner after 2 folds",
+  "seed": 42,
+  "trials_total": 30,
+  "trials_completed": 19,
+  "trials_pruned": 11,
+  "search_wall_time_s": 976.2,
+  "best_trial": 15,
+  "best_value": 0.08501066637739078,
+  "best_params": {
+    "n_estimators": 186,
+    "learning_rate": 0.04646874950888428,
+    "num_leaves": 38,
+    "min_child_samples": 214,
+    "subsample": 0.5099834722785649,
+    "colsample_bytree": 0.786299581298288,
+    "reg_alpha": 0.010661165139773202,
+    "reg_lambda": 0.2154777719982335
+  },
+  "baseline_untuned": {
+    "n_estimators": 300,
+    "learning_rate": 0.05,
+    "num_leaves": 63
+  },
+  "best_cv_metrics": {
+    "log_loss": 0.08501066637739078,
+    "log_loss_std": 0.008901016441490947,
+    "macro_f1": 0.9223160377603292,
+    "macro_f1_std": 0.013837770922233945,
+    "precision": 0.8823866289952494,
+    "precision_std": 0.01755021901223506,
+    "recall": 0.846695478052548,
+    "recall_std": 0.03677604494033607,
+    "top1_acc": 0.8703346659564133,
+    "top1_acc_std": 0.02382284521315446
+  },
+  "search_space": {
+    "n_estimators": [
+      100,
+      600
+    ],
+    "learning_rate": [
+      0.02,
+      0.2,
+      "log"
+    ],
+    "num_leaves": [
+      15,
+      255,
+      "log"
+    ],
+    "min_child_samples": [
+      20,
+      500,
+      "log"
+    ],
+    "subsample": [
+      0.5,
+      1.0
+    ],
+    "colsample_bytree": [
+      0.5,
+      1.0
+    ],
+    "reg_alpha": [
+      0.001,
+      10,
+      "log"
+    ],
+    "reg_lambda": [
+      0.001,
+      10,
+      "log"
+    ]
+  },
+  "test_mode_max_trips": null
+}
