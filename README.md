@@ -1,6 +1,4 @@
-# PathSnap: ML map-matching with HMM/Viterbi
-
-PathSnap constructs a vehicle’s trajectory using noisy 1 Hz GPS points and snapping them to a road network.
+# PathSnap: ML Map-Matching with HMM/Viterbi
 
 ## Team Members
 | SRN | Name |
@@ -12,11 +10,14 @@ PathSnap constructs a vehicle’s trajectory using noisy 1 Hz GPS points and sna
 
 ---
 
-1. **Candidates.** For each GPS point, determine road arcs within 40 m and calculate some features (distance, alignment of headings, velocity, ...).
-2. **Classifier.** A model assigns a probability for each candidate arc to be the correct one. Five kinds of models were trained and compared; the final classifier is a tuned LightGBM.
-3. **HMM/Viterbi decoding.** Uses these probabilities and the connectivity of the road graph to choose a consistent trajectory for each trip.
+## Overview
+PathSnap constructs a vehicle’s trajectory from noisy 1 Hz GPS points by snapping them to a directed road network. The pipeline runs in three main steps:
 
-Note about data: 90 trips included in the dataset (80 training, 10 test for students) come from different cities around the world, and each trip constitutes its own map, hence each trip is projected into its own metric coordinate system (`Trip.track_xy()`). Evaluator trips are never seen during development.
+1. **Candidates:** For each GPS point, determine road arcs within 40 m and calculate spatial and kinematic features (distance, heading alignment, velocity, etc.).
+2. **Classifier:** A model assigns a probability for each candidate arc to be the correct one. Five model families were trained and compared; the final champion classifier is a tuned LightGBM.
+3. **HMM/Viterbi Decoding:** Uses these emission probabilities combined with road graph connectivity to find the most likely continuous trajectory for each trip.
+
+> **Data note:** The 90 trips in the dataset (80 training, 10 student-test) come from different cities around the world. Because each trip represents its own local map, every trip is projected into its own metric coordinate system (`Trip.track_xy()`). Evaluator trips were kept strictly blind during development.
 
 ## Setup
 Python 3.13 (should work with 3.11 or 3.12; definitely won’t work with 3.14). Complete instructions on how to install everything and where to put your data are in [SETUP.md](SETUP.md); brief summary:
