@@ -16,5 +16,4 @@ ARTIFACTS_DIR = ROOT / "artifacts"
 RESULTS_DIR = ROOT / "results"
 
 SEED = 42
-# Dataset is around Darmstadt, Germany (lon ~8.6, lat ~49.85) -> UTM zone 32N
-METRIC_CRS = "EPSG:32632"
+# Metric projection is per trip (see Trip._to_metric): the dataset covers many cities worldwide.
