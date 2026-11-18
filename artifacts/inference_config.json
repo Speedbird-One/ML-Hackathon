@@ -1,0 +1,26 @@
+{
+  "model_file": "lgbm.joblib",
+  "model_name": "LightGBM",
+  "features": [
+    "dist_m",
+    "along_frac",
+    "arc_len_m",
+    "speed_mps",
+    "cos_heading",
+    "dist_rank",
+    "dist_minus_min",
+    "n_cand"
+  ],
+  "candidate_radius_m": 40.0,
+  "hmm_top_k": 8,
+  "hmm_params": {
+    "sigma": 4.07,
+    "beta": 5.0,
+    "max_net_dist_m": 300.0,
+    "gap_s": 30.0,
+    "gap_m": 200.0,
+    "unreachable_penalty": -1000.0,
+    "use_score": true,
+    "jitter_tol_m": 10.0
+  }
+}
