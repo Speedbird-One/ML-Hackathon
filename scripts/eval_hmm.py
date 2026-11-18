@@ -16,6 +16,11 @@ Usage (repo root):
     python scripts/eval_hmm.py --model mlp                      # any saved model in artifacts/
     python scripts/eval_hmm.py --params artifacts/hmm_params.json --jobs 4
 Outputs in results/hmm/: hmm_eval_student_test.csv/.md, hmm_eval_per_trip.csv, hmm_eval_where_not_helped.md
+It also exports the DECODED ROUTES in the scores-file format that scripts/make_map.py reads, so the final pipeline can be mapped:
+    results/scores/hmm_student_test.parquet          decoded route of the final pipeline (tuned parameters if available, else default)
+    results/scores/hmm_default_student_test.parquet  decoded route with the default parameters
+    (columns trip_id, point_idx, arc_id, score; score is 1.0 for the decoded arc, it is a route, not a probability)
+    python scripts/make_map.py --model hmm --trip-id 00000000
 """
 import argparse
 import os
@@ -27,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import joblib
+import numpy as np
 import pandas as pd
 from joblib import Parallel
 
@@ -83,6 +89,22 @@ for name, (preds, cpu_s, wall_s) in results.items():
 summary = pd.DataFrame(rows)
 summary.to_csv(args.out_dir / "hmm_eval_student_test.csv", index=False)
 (args.out_dir / "hmm_eval_student_test.md").write_text(summary.to_markdown(index=False, floatfmt=".4f"), encoding="utf-8")
+
+# decoded routes in the format make_map.py reads (one row per point that received a prediction)
+scores_dir = RESULTS_DIR / "scores"
+scores_dir.mkdir(parents=True, exist_ok=True)
+
+
+def routes_frame(preds):
+    parts = [pd.DataFrame({"trip_id": t, "point_idx": np.flatnonzero(p >= 0).astype(np.int32), "arc_id": p[p >= 0].astype(np.int32),
+                           "score": np.float32(1.0)}) for t, p in preds.items()]
+    return pd.concat(parts, ignore_index=True)
+
+
+routes_frame(results["HMM, default parameters"][0]).to_parquet(scores_dir / "hmm_default_student_test.parquet", index=False)
+final_key = "HMM, tuned parameters" if have_tuned else "HMM, default parameters"
+routes_frame(results[final_key][0]).to_parquet(scores_dir / "hmm_student_test.parquet", index=False)
+print(f"decoded routes ({final_key}) written to {scores_dir / 'hmm_student_test.parquet'}")
 
 # trip-by-trip table and the cases where the HMM did not help
 base = per_trip["Classifier only"].set_index("trip")

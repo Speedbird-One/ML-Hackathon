@@ -62,6 +62,7 @@ python scripts/eval_hmm.py               # classifier-only vs classifier + HMM o
 
 # 8. Folium maps (any model, any trip)
 python scripts/make_map.py --model lgbm --scores-path results/scores/lgbm_tuned_student_test.parquet --trip-id 00000000
+python scripts/make_map.py --model hmm --trip-id 00000000     # the final pipeline: classifier + HMM-decoded route (after eval_hmm.py)
 
 # Tests
 python tests/test_metrics.py && python tests/test_hmm.py
